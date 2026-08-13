@@ -1,0 +1,32 @@
+version: "3.8"
+
+services:
+  db:
+    image: mariadb:11
+    container_name: tresen-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      # Passt den Pfad ggf. an euer Unraid-Share an (appdata ist Standard)
+      - /mnt/user/appdata/tresen/db:/var/lib/mysql
+
+  web:
+    build: ./web
+    container_name: tresen-web
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      DB_HOST: db
+      DB_NAME: ${MYSQL_DATABASE}
+      DB_USER: ${MYSQL_USER}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      # links: Port auf dem Unraid-Host, rechts: Port im Container (nicht ändern)
+      - "8090:80"
+    volumes:
+      - ./app:/var/www/html
