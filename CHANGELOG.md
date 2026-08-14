@@ -98,6 +98,31 @@ per Bar/Überweisung/SEPA abgerechnet.
 - PIN wird beim ersten Nutzungsversuch einmalig festgelegt und danach nur zur
   Bestätigung abgefragt.
 
+## v1.15 – Touch-Optimierung & responsives Layout
+- Alle Buttons, Eingabefelder und Tabellen-Icons auf durchgängig touch-taugliche
+  Mindestgrößen gebracht (Buttons min. 46px hoch, Icon-Buttons 40×40px statt
+  vorher ~20px).
+- Schriftgrößen in Tabellen, Kacheln, Tabs und Formularen insgesamt angehoben.
+- Drei statt einer Breakpoint-Stufe: kleine Handys (<520px), Tablets im
+  Hochformat/kleine Fenster (ab 700px), große Tablets quer & Desktop
+  (ab 1100px) – statt nur der ursprünglichen Fire-HD-10-Sonderregel.
+- Eingabefelder auf 16px Schriftgröße gesetzt, damit iOS-Browser beim
+  Fokussieren nicht automatisch hineinzoomen.
+
+## v1.16 – Feste Kopf-/Fußzeile ohne Seiten-Scroll
+- Layout auf ein App-Shell-Prinzip umgestellt: Header und Fußzeile bleiben
+  fest sichtbar, nur der mittlere Inhaltsbereich (Mitgliederliste,
+  Produkttabelle, Verlauf) scrollt bei Bedarf für sich.
+- Verhindert, dass die Fußzeile durch langes Scrollen der Gesamtseite aus dem
+  sichtbaren Bereich verschwindet, unabhängig von der Menge an Inhalt.
+
+## v1.17 – Statischer, zweifarbiger Vereinsname im Header
+- Der Vereinsname ist nicht mehr als Eingabefeld bearbeitbar, sondern ein
+  fester Schriftzug – verhindert versehentliche oder unautorisierte
+  Änderungen.
+- Zweifarbige Gestaltung (letztes Wort in Vereins-Gold hervorgehoben) für
+  einen wortmarkenartigen Look, inklusive dezentem Schlagschatten.
+
 ---
 
 ## Architektur-Überblick (Stand heute)
