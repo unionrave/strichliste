@@ -123,6 +123,17 @@ per Bar/Überweisung/SEPA abgerechnet.
 - Zweifarbige Gestaltung (letztes Wort in Vereins-Gold hervorgehoben) für
   einen wortmarkenartigen Look, inklusive dezentem Schlagschatten.
 
+## v1.17.1 – Mitglieder bearbeiten & Scroll-Fix an der Theke
+- Analog zu Produkten lassen sich jetzt auch bestehende Mitglieder nachträglich
+  bearbeiten (aktuell: Name), statt nur anlegen/aktivieren/deaktivieren/löschen
+  zu können.
+- Scroll-Position bleibt jetzt über jede Aktion hinweg erhalten (betraf vor
+  allem das Bestellen an der Theke im Fully Kiosk Browser auf dem Fire HD 10):
+  vorher sprang der Inhaltsbereich bei jedem Tippen zurück nach oben, weil die
+  Ansicht komplett neu aufgebaut wurde.
+- Beim Auswählen eines Mitglieds an der Theke scrollt die App automatisch
+  sanft zur Bestellmaske, ohne dass manuell runtergescrollt werden muss.
+
 ---
 
 ## Architektur-Überblick (Stand heute)

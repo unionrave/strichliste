@@ -385,6 +385,11 @@
     const app = document.getElementById('app');
     if(!state.loaded){ app.innerHTML = '<div class="loading">Lade Tresen …</div>'; return; }
 
+    // Scroll-Position des Inhaltsbereichs merken, damit z. B. beim Bestellen
+    // an der Theke nicht nach jedem Tippen wieder nach oben gesprungen wird.
+    const prevScroller = app.querySelector('main, #app > div');
+    const prevScrollTop = prevScroller ? prevScroller.scrollTop : 0;
+
     app.innerHTML = '';
     if(!state.auth){ app.appendChild(renderSetupScreen()); return; }
     if(!state.thekeUnlocked){ app.appendChild(renderLockScreen()); return; }
@@ -392,6 +397,7 @@
     const main = document.createElement('main');
     main.appendChild(renderView());
     app.appendChild(main);
+    main.scrollTop = prevScrollTop;
   }
 
   function renderSetupScreen(){
@@ -623,9 +629,18 @@
         </button>
       `);
       chip.addEventListener('click', ()=>{
-        state.selectedMember = state.selectedMember === m.id ? null : m.id;
+        const wasSelected = state.selectedMember === m.id;
+        state.selectedMember = wasSelected ? null : m.id;
         state.cart = {};
         render();
+        if(!wasSelected){
+          // Neu ausgewähltes Mitglied: automatisch zur Bestellmaske scrollen,
+          // statt dass manuell runtergescrollt werden muss.
+          requestAnimationFrame(()=>{
+            const panel = document.querySelector('.order-panel');
+            if(panel) panel.scrollIntoView({behavior:'smooth', block:'start'});
+          });
+        }
       });
       grid.appendChild(chip);
     }
@@ -862,6 +877,44 @@
   }
 
   // ---------- MITGLIEDER ----------
+
+  function openEditMemberModal(m){
+    const backdrop = el(`
+      <div class="modal-backdrop">
+        <div class="modal">
+          <h3>Mitglied bearbeiten</h3>
+          <div class="field">
+            <label>Name</label>
+            <input type="text" id="editMemberName" value="${escapeHtml(m.name)}" />
+          </div>
+          <div id="editMemberError" style="color:var(--danger); font-size:12.5px; min-height:16px;"></div>
+          <div class="modal-actions">
+            <button class="btn ghost" id="editMemberCancel">Abbrechen</button>
+            <button class="btn" id="editMemberSave">Speichern</button>
+          </div>
+        </div>
+      </div>
+    `);
+    document.body.appendChild(backdrop);
+    const input = backdrop.querySelector('#editMemberName');
+    backdrop.querySelector('#editMemberCancel').addEventListener('click', ()=>backdrop.remove());
+    backdrop.addEventListener('click', (e)=>{ if(e.target===backdrop) backdrop.remove(); });
+    const saveEdit = async ()=>{
+      const name = input.value.trim();
+      const err = backdrop.querySelector('#editMemberError');
+      if(!name){ err.textContent = 'Bitte einen Namen angeben.'; return; }
+      m.name = name;
+      const ok = await saveMembers();
+      if(!ok){ err.textContent = 'Speichern fehlgeschlagen.'; return; }
+      backdrop.remove();
+      toast('Mitglied aktualisiert');
+      render();
+    };
+    backdrop.querySelector('#editMemberSave').addEventListener('click', saveEdit);
+    input.addEventListener('keydown', e=>{ if(e.key==='Enter') saveEdit(); });
+    setTimeout(()=>{ input.focus(); input.select(); }, 50);
+  }
+
   function renderMitglieder(){
     const wrap = document.createElement('div');
     const card = el(`<div class="card"><div class="section-title">Mitglied hinzufügen</div></div>`);
@@ -906,11 +959,13 @@
             <td class="num balance ${cls}">${fmt(bal)}</td>
             <td>${m.active===false ? 'inaktiv' : 'aktiv'}</td>
             <td style="text-align:right; white-space:nowrap;">
+              <button class="icon-btn" data-act="edit" title="Bearbeiten">✎</button>
               <button class="icon-btn" data-act="toggle" title="Aktiv/Inaktiv">⇄</button>
               <button class="icon-btn" data-act="del" title="Löschen">✕</button>
             </td>
           </tr>
         `);
+        tr.querySelector('[data-act="edit"]').addEventListener('click', ()=> openEditMemberModal(m));
         tr.querySelector('[data-act="toggle"]').addEventListener('click', async ()=>{
           m.active = m.active === false ? true : false;
           await saveMembers(); render();
