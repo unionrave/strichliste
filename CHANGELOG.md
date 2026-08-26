@@ -123,16 +123,65 @@ per Bar/Überweisung/SEPA abgerechnet.
 - Zweifarbige Gestaltung (letztes Wort in Vereins-Gold hervorgehoben) für
   einen wortmarkenartigen Look, inklusive dezentem Schlagschatten.
 
-## v1.17.1 – Mitglieder bearbeiten & Scroll-Fix an der Theke
-- Analog zu Produkten lassen sich jetzt auch bestehende Mitglieder nachträglich
-  bearbeiten (aktuell: Name), statt nur anlegen/aktivieren/deaktivieren/löschen
-  zu können.
-- Scroll-Position bleibt jetzt über jede Aktion hinweg erhalten (betraf vor
-  allem das Bestellen an der Theke im Fully Kiosk Browser auf dem Fire HD 10):
-  vorher sprang der Inhaltsbereich bei jedem Tippen zurück nach oben, weil die
-  Ansicht komplett neu aufgebaut wurde.
-- Beim Auswählen eines Mitglieds an der Theke scrollt die App automatisch
-  sanft zur Bestellmaske, ohne dass manuell runtergescrollt werden muss.
+## v1.17.1 – Mitglieder bearbeiten
+- Bestehende Mitglieder lassen sich jetzt nachträglich umbenennen, analog zur
+  Produktbearbeitung (Bearbeiten-Symbol ✎ in der Mitgliederliste).
+- Bereits gebuchte Beträge im Verlauf sind davon unberührt.
+
+## v1.18 – Sortierung, Produkt-Status, Ersteller-Rechte & Bestell-Overlay
+- **Mitglieder & Produkte frei sortierbar**: Auf/Ab-Buttons je Zeile für beliebige
+  eigene Reihenfolge (bei Produkten innerhalb der jeweiligen Kategorie), plus
+  ein „A–Z sortieren"-Button für einmaliges alphabetisches Neuordnen. Die
+  gespeicherte Reihenfolge gilt konsistent überall – auch an der Theke.
+- **Produkte deaktivierbar**: analog zu Mitgliedern jetzt mit Aktiv/Inaktiv-
+  Umschalter; deaktivierte Produkte verschwinden aus der Bestellmaske,
+  bleiben aber in der Verwaltung erhalten (z. B. für Saisonartikel).
+- **Ersteller-PIN hat zusätzlich alle Admin-Rechte**: überall, wo das
+  Admin-PIN verlangt wird (Übersicht, Mitglieder, Produkte), wird jetzt auch
+  der Ersteller-PIN akzeptiert - inklusive direktem Login am Sperrbildschirm
+  mit vollem Admin-Zugriff.
+- **Bestellung an der Theke als Overlay**: Klick auf ein Mitglied öffnet die
+  Bestellmaske jetzt als großflächiges Overlay statt als Inline-Karte unter
+  der Mitgliederliste. Nutzt den Bildschirm besser aus, die Buchen-Leiste mit
+  Warenkorb-Summe bleibt dabei immer sichtbar am unteren Rand, ganz ohne
+  Scrollen.
+- Enthält außerdem die vorherige v1.17.1-Ergänzung: Mitglieder bearbeiten
+  sowie den Scroll-Fix an der Theke (Fully Kiosk Browser / Fire HD 10).
+
+## v1.18.1 – Größere Kacheln, verlässliches 3-Spalten-Layout & getrennte Namen
+- Mitglieder- und Produktkacheln an der Theke sowie im Bestell-Overlay deutlich
+  vergrößert (Schrift, Innenabstand, Mindesthöhe) für bessere Touch-Bedienung.
+- Im Hochformat auf Tablets (z. B. Fire HD 10) wird jetzt zuverlässig eine
+  feste 3-Spalten-Ansicht erzwungen - an `orientation:portrait` gekoppelt statt
+  an eine feste Pixelbreite, weil der Fully Kiosk Browser die Viewport-Breite
+  abweichend meldet und eine reine Breiten-Regel dadurch nicht griff.
+- Mitglieder haben jetzt getrennte **Vorname-/Nachname-Felder** statt eines
+  gemeinsamen Namensfelds, inklusive zweier eigener Sortier-Buttons
+  („Vorname A–Z" / „Nachname A–Z") zusätzlich zur bestehenden freien
+  ▲▼-Sortierung.
+- Bestehende Mitgliederdatensätze werden beim Laden automatisch von einem
+  einzelnen Namensfeld auf die neuen getrennten Felder migriert - keine
+  manuelle Nacharbeit nötig.
+
+## v1.19.0 – Korrekturbuchungen & Barcode-Anmeldung
+- **Negative Zahlungen/Korrekturbuchungen**: Der Dialog „Zahlung erfassen"
+  akzeptiert jetzt auch negative Beträge, um bereits erfasste Zahlungen oder
+  Guthaben zu korrigieren, ohne die ursprüngliche Buchung löschen zu müssen.
+  Neue Zahlweise „Korrektur" zur Auswahl. Der Verlauf zeigt Vorzeichen und
+  Farbe jetzt passend zur tatsächlichen Saldo-Auswirkung an.
+- **Barcode-/QR-Scan per Kamera** (über die eingebettete ZXing-Bibliothek,
+  läuft vollständig im Browser):
+  - An der Theke: Mitglied per Kamera-Scan direkt auswählen, statt zu tippen.
+  - Am Sperrbildschirm: PIN per Scan eines Codes eingeben, der den PIN-Wert
+    enthält.
+  - Bei Mitgliedern (Anlegen & Bearbeiten): ein Barcode kann einmalig per
+    Kamera erfasst und dem Mitglied zugeordnet werden; doppelte Zuordnungen
+    werden verhindert.
+  - Voraussetzung: Zugriff über HTTPS (oder localhost) sowie erlaubter
+    Kamerazugriff im verwendeten Browser/Kiosk-Modus.
+- **Versionsanzeige im Footer**: Die aktuell installierte Version steht ab
+  sofort dauerhaft in der Fußzeile der App, sichtbar in jedem Bereich
+  inklusive Sperrbildschirm.
 
 ---
 
