@@ -347,6 +347,7 @@
     selectedMember: null,
     cart: {}, // productId -> qty
     memberSearch: '',
+    verlaufFilter: { memberId: '', type: '', from: '', to: '' },
   };
 
   const ADMIN_VIEWS = ['uebersicht','mitglieder','produkte'];
@@ -575,7 +576,7 @@
           <div class="section-title" style="text-align:center;">${escapeHtml(state.settings.clubName)}</div>
           <div style="font-size:13px; color:var(--muted); margin-bottom:14px;">🔒 Bitte Theke-PIN eingeben</div>
           <div style="display:flex; gap:8px;">
-            <input type="password" id="lockPin" inputmode="numeric" placeholder="PIN" style="flex:1; text-align:center; font-size:18px; letter-spacing:0.1em;" />
+            <input type="password" id="lockPin" inputmode="numeric" placeholder="PIN" style="flex:1; min-width:0; text-align:center; font-size:18px; letter-spacing:0.1em;" />
             <button class="scan-btn" id="lockScanBtn" title="PIN per Kamera scannen">📷</button>
           </div>
           <div id="lockError" style="color:var(--danger); font-size:12.5px; min-height:16px; margin-top:6px;"></div>
@@ -1484,7 +1485,74 @@
       wrap.appendChild(card);
       return wrap;
     }
-    const sorted = state.transactions.slice().sort((a,b)=>b.ts-a.ts);
+
+    // ---- Filterleiste ----
+    const f = state.verlaufFilter;
+    const membersForFilter = state.members.slice().sort((a,b)=> fullName(a).localeCompare(fullName(b)));
+    const filterCard = el(`
+      <div class="card">
+        <div class="row" style="align-items:flex-end;">
+          <div class="field" style="flex:1; min-width:170px; margin-bottom:0;">
+            <label>Mitglied</label>
+            <select id="filterMember">
+              <option value="">Alle Mitglieder</option>
+              ${membersForFilter.map(m=>`<option value="${m.id}" ${f.memberId===m.id?'selected':''}>${escapeHtml(fullName(m))}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field" style="flex:1; min-width:150px; margin-bottom:0;">
+            <label>Art</label>
+            <select id="filterType">
+              <option value="" ${f.type===''?'selected':''}>Alle</option>
+              <option value="order" ${f.type==='order'?'selected':''}>Bestellungen</option>
+              <option value="payment" ${f.type==='payment'?'selected':''}>Zahlungen</option>
+              <option value="korrektur" ${f.type==='korrektur'?'selected':''}>Korrekturen</option>
+            </select>
+          </div>
+          <div class="field" style="flex:1; min-width:140px; margin-bottom:0;">
+            <label>Von</label>
+            <input type="date" id="filterFrom" value="${f.from}" />
+          </div>
+          <div class="field" style="flex:1; min-width:140px; margin-bottom:0;">
+            <label>Bis</label>
+            <input type="date" id="filterTo" value="${f.to}" />
+          </div>
+          <button class="btn ghost" id="filterReset" style="flex:0 0 auto;">Zurücksetzen</button>
+        </div>
+      </div>
+    `);
+    filterCard.querySelector('#filterMember').addEventListener('change', e=>{ f.memberId = e.target.value; render(); });
+    filterCard.querySelector('#filterType').addEventListener('change', e=>{ f.type = e.target.value; render(); });
+    filterCard.querySelector('#filterFrom').addEventListener('change', e=>{ f.from = e.target.value; render(); });
+    filterCard.querySelector('#filterTo').addEventListener('change', e=>{ f.to = e.target.value; render(); });
+    filterCard.querySelector('#filterReset').addEventListener('click', ()=>{
+      state.verlaufFilter = { memberId:'', type:'', from:'', to:'' };
+      render();
+    });
+    wrap.appendChild(filterCard);
+
+    const filtered = state.transactions.filter(t=>{
+      if(f.memberId && t.memberId !== f.memberId) return false;
+      if(f.type==='order' && t.type!=='order') return false;
+      if(f.type==='payment' && !(t.type==='payment' && t.amount>=0)) return false;
+      if(f.type==='korrektur' && !(t.type==='payment' && t.amount<0)) return false;
+      if(f.from){
+        const fromTs = new Date(f.from + 'T00:00:00').getTime();
+        if(t.ts < fromTs) return false;
+      }
+      if(f.to){
+        const toTs = new Date(f.to + 'T23:59:59').getTime();
+        if(t.ts > toTs) return false;
+      }
+      return true;
+    });
+
+    if(filtered.length===0){
+      card.appendChild(el(`<div class="empty">Keine Buchungen für diesen Filter.</div>`));
+      wrap.appendChild(card);
+      return wrap;
+    }
+
+    const sorted = filtered.slice().sort((a,b)=>b.ts-a.ts);
     const table = el(`
       <table>
         <thead><tr><th>Datum</th><th>Mitglied</th><th>Art</th><th></th><th class="num">Betrag</th></tr></thead>
