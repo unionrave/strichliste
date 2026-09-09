@@ -9,13 +9,24 @@ Die vollständige Entstehungsgeschichte und alle Änderungen stehen in
 
 ## Funktionen
 
-- **Theke** – Mitglied auswählen, Produkte antippen, auf Konto buchen
+- **Theke** – Mitglied auswählen, Bestellung im großflächigen Overlay
+  zusammenstellen, auf Konto buchen
 - **Übersicht** – alle Salden, Zahlungen (Bar/Überweisung/SEPA) erfassen
-- **Mitglieder** – anlegen, bearbeiten, aktiv/inaktiv setzen
-- **Produkte** – anlegen, bearbeiten (Name/Kategorie/Preis), löschen
-- **Verlauf** – vollständige Buchungshistorie, inkl. geschütztem Zurücksetzen
-- **Dreistufiger PIN-Schutz** – Theke / Admin / Ersteller (siehe Changelog)
-- Vereinsfarben & -logo, für Tablet-Vollbildbetrieb (z. B. Fire HD 10) optimiert
+- **Mitglieder** – anlegen (Vor-/Nachname getrennt), bearbeiten,
+  aktiv/inaktiv setzen, frei sortierbar (▲▼ oder A–Z je Feld)
+- **Produkte** – anlegen, bearbeiten (Name/Kategorie/Preis), aktiv/inaktiv
+  setzen, frei sortierbar (▲▼ oder A–Z)
+- **Verlauf** – vollständige Buchungshistorie, inkl. Ersteller-geschütztem
+  Zurücksetzen
+- **Dreistufiger PIN-Schutz** – Theke / Admin / Ersteller, wobei der
+  Ersteller-PIN zusätzlich alle Admin-Rechte besitzt (siehe Changelog)
+- Responsive & touch-optimiert (u. a. verlässliches 3-Spalten-Layout im
+  Tablet-Hochformat), feste Kopf-/Fußzeile ohne Seiten-Scroll
+- Vereinsfarben & -logo, für Tablet-Vollbildbetrieb (z. B. Fire HD 10 im
+  Fully Kiosk Browser) optimiert
+- **Barcode-/QR-Scan per Kamera** – Mitgliedsauswahl an der Theke und
+  PIN-Anmeldung lassen sich per Kartenscan statt Tippen erledigen
+  (benötigt HTTPS-Zugriff)
 
 ## Aufbau
 
