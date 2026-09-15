@@ -163,7 +163,7 @@ per Bar/Überweisung/SEPA abgerechnet.
   einzelnen Namensfeld auf die neuen getrennten Felder migriert - keine
   manuelle Nacharbeit nötig.
 
-## v1.19.0 – Korrekturbuchungen & Barcode-Anmeldung
+## v1.18.2 – Korrekturbuchungen, Barcode-Anmeldung & Verlauf-Filter
 - **Negative Zahlungen/Korrekturbuchungen**: Der Dialog „Zahlung erfassen"
   akzeptiert jetzt auch negative Beträge, um bereits erfasste Zahlungen oder
   Guthaben zu korrigieren, ohne die ursprüngliche Buchung löschen zu müssen.
@@ -179,9 +179,38 @@ per Bar/Überweisung/SEPA abgerechnet.
     werden verhindert.
   - Voraussetzung: Zugriff über HTTPS (oder localhost) sowie erlaubter
     Kamerazugriff im verwendeten Browser/Kiosk-Modus.
+  - Kleinere Korrektur: das PIN-Feld am Sperrbildschirm schrumpft jetzt
+    korrekt, damit der Kamera-Button daneben nicht abgeschnitten wird.
 - **Versionsanzeige im Footer**: Die aktuell installierte Version steht ab
   sofort dauerhaft in der Fußzeile der App, sichtbar in jedem Bereich
   inklusive Sperrbildschirm.
+- **Filterleiste im Verlauf**: Buchungen lassen sich jetzt nach Mitglied, Art
+  (Bestellung/Zahlung/Korrektur) sowie Zeitraum (von/bis) filtern, beliebig
+  kombinierbar, mit einem Klick zurücksetzbar. „Verlauf löschen" bleibt davon
+  unabhängig und setzt weiterhin immer den kompletten Verlauf zurück.
+
+## v1.18.3 – Sicherheitslücke bei den PINs behoben
+- **Kritischer Fix**: Bisher lieferte der Server auf Anfrage den kompletten
+  Auth-Datensatz (Theke-, Admin- **und** Ersteller-PIN im Klartext) aus -
+  abrufbar von jedem mit Zugriff auf die Browser-Konsole, unabhängig davon,
+  welchen PIN die Person selbst kannte. Das hebelte den gesamten PIN-Schutz
+  aus.
+- PIN-Prüfung läuft jetzt ausschließlich serverseitig über drei neue,
+  dedizierte Aktionen in `api.php` (`auth_status`, `verify_pin`, `set_auth`).
+  Der Server beantwortet Anfragen nur noch mit "welche Berechtigungsstufe"
+  bzw. "ja/nein", nie mit den PIN-Werten selbst. Der Eintrag `auth` ist für
+  den normalen Lese-/Schreibzugriff (GET sowie generisches POST) komplett
+  gesperrt.
+- Ändern bestehender PINs verlangt jetzt eine serverseitig geprüfte
+  Bestätigung mit dem aktuell gültigen Admin- oder Ersteller-PIN - nicht mehr
+  nur eine Prüfung im Browser.
+- PIN-Vergleiche laufen serverseitig über eine zeitsichere Vergleichsfunktion
+  (`hash_equals`) statt einfacher Gleichheitsprüfung.
+- Betrifft ausschließlich die selbst gehostete Version (`index.html` +
+  `api.php`). Die Vorschauversion hier im Chat (`tresen.html`, nutzt Claudes
+  eigenen Speicher statt einer eigenen Datenbank) ist von diesem Fix nicht
+  betroffen, da es dafür keine vergleichbare serverseitige Komponente gibt -
+  sie ist aber ohnehin nicht die produktiv genutzte App.
 
 ---
 
