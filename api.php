@@ -36,6 +36,26 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS kv_store (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+// Buchungen liegen NICHT im Key-Value-Speicher, sondern in einer eigenen
+// Tabelle mit einer Zeile pro Buchung. Das hält jede einzelne neue Buchung
+// schnell, auch wenn die Historie über Jahre auf mehrere tausend Einträge
+// anwächst - anders als ein einzelner, bei jeder Änderung komplett neu
+// geschriebener JSON-Textblock.
+$pdo->exec("CREATE TABLE IF NOT EXISTS transactions (
+    id VARCHAR(40) PRIMARY KEY,
+    type VARCHAR(20) NOT NULL,
+    member_id VARCHAR(40) NOT NULL,
+    ts BIGINT NOT NULL,
+    total DECIMAL(10,2) NULL,
+    amount DECIMAL(10,2) NULL,
+    method VARCHAR(30) NULL,
+    note TEXT NULL,
+    items LONGTEXT NULL,
+    INDEX idx_member (member_id),
+    INDEX idx_ts (ts),
+    INDEX idx_type (type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
 function kv_get($pdo, $key) {
     $stmt = $pdo->prepare("SELECT v FROM kv_store WHERE k = ?");
     $stmt->execute([$key]);
@@ -55,6 +75,54 @@ function get_auth($pdo) {
 }
 function pin_matches($stored, $given) {
     return !empty($stored) && $given !== '' && hash_equals((string)$stored, (string)$given);
+}
+function tx_row_to_array($row) {
+    return [
+        'id' => $row['id'],
+        'type' => $row['type'],
+        'memberId' => $row['member_id'],
+        'ts' => (int)$row['ts'],
+        'total' => $row['total'] !== null ? (float)$row['total'] : null,
+        'amount' => $row['amount'] !== null ? (float)$row['amount'] : null,
+        'method' => $row['method'],
+        'note' => $row['note'],
+        'items' => $row['items'] ? json_decode($row['items'], true) : null,
+    ];
+}
+// Einmalige, sich selbst erledigende Migration: ältere Installationen hatten
+// die komplette Buchungshistorie als ein JSON-Array unter dem kv_store-
+// Schlüssel "transactions" gespeichert. Falls das noch vorhanden ist und die
+// neue Tabelle noch leer ist, einmalig übernehmen und den alten Eintrag danach
+// umbenennen (nicht löschen, für den Fall der Fälle).
+function migrate_legacy_transactions_if_needed($pdo) {
+    $legacyRaw = kv_get($pdo, 'transactions');
+    if ($legacyRaw === null) return;
+    $countStmt = $pdo->query("SELECT COUNT(*) AS c FROM transactions");
+    $count = (int)$countStmt->fetch(PDO::FETCH_ASSOC)['c'];
+    if ($count > 0) return; // schon migriert oder bereits Daten vorhanden
+    $legacy = json_decode($legacyRaw, true);
+    if (!is_array($legacy)) return;
+    $insert = $pdo->prepare(
+        "INSERT IGNORE INTO transactions (id, type, member_id, ts, total, amount, method, note, items)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    );
+    foreach ($legacy as $t) {
+        $insert->execute([
+            $t['id'] ?? uniqid('legacy_', true),
+            $t['type'] ?? 'order',
+            $t['memberId'] ?? '',
+            $t['ts'] ?? 0,
+            isset($t['total']) ? $t['total'] : null,
+            isset($t['amount']) ? $t['amount'] : null,
+            $t['method'] ?? null,
+            $t['note'] ?? null,
+            isset($t['items']) ? json_encode($t['items']) : null,
+        ]);
+    }
+    // Alten Blob umbenennen statt löschen - dient als Sicherheitsnetz.
+    kv_set($pdo, 'transactions_migrated_backup', $legacyRaw);
+    $del = $pdo->prepare("DELETE FROM kv_store WHERE k = 'transactions'");
+    $del->execute();
 }
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -177,6 +245,120 @@ if ($method === 'POST') {
         }
 
         kv_set($pdo, AUTH_KEY, json_encode($next));
+        echo json_encode(['ok' => true]);
+        exit;
+    }
+
+    // ---- Buchungen: eigene Tabelle statt JSON-Blob ----
+
+    if ($action === 'migrate_transactions') {
+        migrate_legacy_transactions_if_needed($pdo);
+        echo json_encode(['ok' => true]);
+        exit;
+    }
+
+    if ($action === 'add_transaction') {
+        $t = isset($input['transaction']) ? $input['transaction'] : null;
+        if (!is_array($t) || empty($t['id']) || empty($t['type']) || empty($t['memberId'])) {
+            http_response_code(400);
+            echo json_encode(['error' => 'invalid_transaction']);
+            exit;
+        }
+        $stmt = $pdo->prepare(
+            "INSERT INTO transactions (id, type, member_id, ts, total, amount, method, note, items)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        );
+        $stmt->execute([
+            $t['id'],
+            $t['type'],
+            $t['memberId'],
+            $t['ts'] ?? (int)(microtime(true) * 1000),
+            $t['total'] ?? null,
+            $t['amount'] ?? null,
+            $t['method'] ?? null,
+            $t['note'] ?? null,
+            isset($t['items']) ? json_encode($t['items']) : null,
+        ]);
+        echo json_encode(['ok' => true]);
+        exit;
+    }
+
+    // Aktuellen Saldo je Mitglied direkt per SQL-Summe berechnen, statt die
+    // komplette Historie an den Client zu übertragen und dort zu summieren.
+    if ($action === 'get_balances') {
+        $stmt = $pdo->query(
+            "SELECT member_id,
+                    SUM(CASE WHEN type = 'order' THEN total
+                             WHEN type = 'payment' THEN -amount
+                             ELSE 0 END) AS balance
+             FROM transactions
+             GROUP BY member_id"
+        );
+        $balances = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $balances[$row['member_id']] = (float)$row['balance'];
+        }
+        echo json_encode(['balances' => $balances]);
+        exit;
+    }
+
+    // Gefilterte, mit Limit/Offset seitenweise abrufbare Buchungsliste für den
+    // Verlauf - läuft komplett über die Datenbank (Index auf ts/member_id),
+    // nicht mehr über einen im Browser gehaltenen Riesen-Array.
+    if ($action === 'list_transactions') {
+        $where = [];
+        $params = [];
+        if (!empty($input['memberId'])) {
+            $where[] = "member_id = ?";
+            $params[] = $input['memberId'];
+        }
+        if (!empty($input['type'])) {
+            if ($input['type'] === 'order') {
+                $where[] = "type = 'order'";
+            } elseif ($input['type'] === 'payment') {
+                $where[] = "type = 'payment' AND amount >= 0";
+            } elseif ($input['type'] === 'korrektur') {
+                $where[] = "type = 'payment' AND amount < 0";
+            }
+        }
+        if (!empty($input['from'])) {
+            $where[] = "ts >= ?";
+            $params[] = (int)$input['from'];
+        }
+        if (!empty($input['to'])) {
+            $where[] = "ts <= ?";
+            $params[] = (int)$input['to'];
+        }
+        $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+
+        $countStmt = $pdo->prepare("SELECT COUNT(*) AS c FROM transactions $whereSql");
+        $countStmt->execute($params);
+        $total = (int)$countStmt->fetch(PDO::FETCH_ASSOC)['c'];
+
+        $limit = isset($input['limit']) ? max(1, min(500, (int)$input['limit'])) : 100;
+        $offset = isset($input['offset']) ? max(0, (int)$input['offset']) : 0;
+
+        $stmt = $pdo->prepare(
+            "SELECT * FROM transactions $whereSql ORDER BY ts DESC LIMIT $limit OFFSET $offset"
+        );
+        $stmt->execute($params);
+        $rows = array_map('tx_row_to_array', $stmt->fetchAll(PDO::FETCH_ASSOC));
+
+        echo json_encode(['transactions' => $rows, 'total' => $total]);
+        exit;
+    }
+
+    // Kompletten Verlauf leeren - verlangt wie beim PIN-Wechsel eine
+    // serverseitig geprüfte Bestätigung mit dem Ersteller-PIN.
+    if ($action === 'clear_transactions') {
+        $confirmPin = isset($input['confirmPin']) ? (string)$input['confirmPin'] : '';
+        $auth = get_auth($pdo);
+        if (!$auth || !pin_matches($auth['ownerPin'] ?? null, $confirmPin)) {
+            http_response_code(403);
+            echo json_encode(['error' => 'unauthorized']);
+            exit;
+        }
+        $pdo->exec("DELETE FROM transactions");
         echo json_encode(['ok' => true]);
         exit;
     }

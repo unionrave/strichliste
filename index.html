@@ -384,7 +384,7 @@
   "use strict";
 
   // Bei jedem neuen Release hier aktualisieren (erscheint automatisch im Footer).
-  const APP_VERSION = 'v1.18.3';
+  const APP_VERSION = 'v1.19.0';
   document.getElementById('appFooter').textContent =
     'Erstellt von Marco Weber für SG Germania Binsfeld Tennis · ' + APP_VERSION;
 
@@ -397,7 +397,11 @@
     settings: { clubName: 'SG Germania Binsfeld Tennis', requireBarcodeForBookings: false },
     members: [],
     products: [],
-    transactions: [],
+    // Salden je Mitglied (memberId -> Zahl), kommen fertig aggregiert vom
+    // Server (SQL-Summe) statt aus der kompletten Buchungshistorie im Browser
+    // berechnet zu werden. Die Historie selbst wird nur noch bei Bedarf
+    // (Verlauf-Tab) seitenweise nachgeladen, nicht mehr komplett gehalten.
+    balances: {},
     // Enthält NIE die PIN-Werte selbst - nur ob PINs eingerichtet sind und ob
     // schon ein Ersteller-PIN existiert. Die eigentliche Prüfung läuft immer
     // über den Server (verifyPin), nie clientseitig.
@@ -414,14 +418,22 @@
     cart: {}, // productId -> qty
     memberSearch: '',
     verlaufFilter: { memberId: '', type: '', from: '', to: '' },
+    // Zwischengespeicherte, seitenweise geladene Verlaufs-Einträge für den
+    // aktuellen Filter - wird ungültig (und neu geladen), sobald sich der
+    // Filter ändert oder eine neue Buchung/Löschung stattfand.
+    verlaufData: { filterKey: null, items: [], total: 0, offset: 0, loading: false },
   };
 
   const ADMIN_VIEWS = ['uebersicht','mitglieder','produkte'];
 
   async function loadAll(){
     try {
-      const [s, m, p, t, authStatus] = await Promise.all([
-        safeGet('settings'), safeGet('members'), safeGet('products'), safeGet('transactions'), fetchAuthStatus()
+      // Einmalige, sich selbst erledigende Migration alter Installationen
+      // (Buchungshistorie als ein einzelner JSON-Block) auf die neue Tabelle -
+      // no-op, falls schon migriert oder eine neue Installation.
+      await apiAction({ action: 'migrate_transactions' });
+      const [s, m, p, authStatus, balancesRes] = await Promise.all([
+        safeGet('settings'), safeGet('members'), safeGet('products'), fetchAuthStatus(), apiAction({ action:'get_balances' })
       ]);
       if (s) state.settings = JSON.parse(s.value);
       if (m) state.members = JSON.parse(m.value);
@@ -437,8 +449,8 @@
         if(mem.lastName === undefined) mem.lastName = '';
       });
       if (p) state.products = JSON.parse(p.value);
-      if (t) state.transactions = JSON.parse(t.value);
       if (authStatus) state.authStatus = authStatus;
+      if (balancesRes.ok && balancesRes.data) state.balances = balancesRes.data.balances || {};
     } catch(e){ console.error('Ladefehler', e); }
     state.loaded = true;
     render();
@@ -460,6 +472,9 @@
       return { ok:false, status:0, data:null };
     }
   }
+  // Gleiche Funktion, nur unter einem allgemeineren Namen für Aufrufe, die
+  // nichts mit PINs zu tun haben (Buchungen, Migration, Salden).
+  const apiAction = authAction;
   async function fetchAuthStatus(){
     const r = await authAction({ action: 'auth_status' });
     return r.ok ? r.data : null;
@@ -492,17 +507,22 @@
 
   function saveMembers(){ return saveKey('members', state.members); }
   function saveProducts(){ return saveKey('products', state.products); }
-  function saveTransactions(){ return saveKey('transactions', state.transactions); }
   function saveSettings(){ return saveKey('settings', state.settings); }
 
   function balanceOf(memberId){
-    let bal = 0;
-    for(const t of state.transactions){
-      if(t.memberId !== memberId) continue;
-      if(t.type === 'order') bal += t.total;
-      if(t.type === 'payment') bal -= t.amount;
-    }
-    return bal;
+    return state.balances[memberId] || 0;
+  }
+
+  // Bucht eine einzelne Buchung (Bestellung oder Zahlung/Korrektur) und
+  // aktualisiert den betroffenen Saldo direkt lokal, ohne die komplette
+  // Salden-Liste neu vom Server zu laden.
+  async function addTransaction(tx){
+    const r = await apiAction({ action: 'add_transaction', transaction: tx });
+    if(!r.ok) return false;
+    const delta = tx.type === 'order' ? tx.total : -tx.amount;
+    state.balances[tx.memberId] = (state.balances[tx.memberId] || 0) + delta;
+    state.verlaufData.filterKey = null; // Verlauf beim nächsten Aufruf neu laden
+    return true;
   }
 
   function toast(msg){
@@ -983,12 +1003,12 @@
           return { productId: pid, name: p.name, price: p.price, qty: state.cart[pid] };
         });
         const tx = { id: uid(), type:'order', memberId: member.id, items, total, ts: Date.now() };
-        state.transactions.push(tx);
-        const ok = await saveTransactions();
+        const ok = await addTransaction(tx);
         if(ok){
           toast('Gebucht: ' + fmt(total) + ' für ' + fullName(member));
           closeOverlay();
         } else {
+          toast('Speichern fehlgeschlagen – bitte erneut versuchen.');
           bookBtn.disabled = false; bookBtn.textContent = 'Auf Konto buchen';
         }
       });
@@ -1173,10 +1193,10 @@
       const method = backdrop.querySelector('#payMethod').value;
       const note = backdrop.querySelector('#payNote').value.trim();
       const tx = { id: uid(), type:'payment', memberId: member.id, amount: amt, method, note, ts: Date.now() };
-      state.transactions.push(tx);
-      const ok = await saveTransactions();
+      const ok = await addTransaction(tx);
       backdrop.remove();
       if(ok) toast((amt<0 ? 'Korrektur erfasst: ' : 'Zahlung erfasst: ') + fmt(Math.abs(amt)));
+      else toast('Speichern fehlgeschlagen – bitte erneut versuchen.');
       render();
     });
   }
@@ -1576,7 +1596,7 @@
           err.textContent = 'Falscher PIN.'; input.value=''; input.focus(); return;
         }
         backdrop.remove();
-        onSuccess();
+        onSuccess(pin);
       } else {
         const r = await authAction({ action:'set_auth', ownerPin: pin });
         confirmBtn.disabled = false;
@@ -1590,7 +1610,7 @@
         state.authStatus.hasOwnerPin = true;
         backdrop.remove();
         toast('Ersteller-PIN festgelegt');
-        onSuccess();
+        onSuccess(pin);
       }
     };
     backdrop.querySelector('#ownerPinConfirm').addEventListener('click', confirmOwner);
@@ -1598,41 +1618,76 @@
     setTimeout(()=>input.focus(), 50);
   }
 
+  // Lädt eine Seite Buchungen passend zum aktuellen Filter nach. reset=true
+  // beginnt von vorn (Filteränderung), reset=false hängt eine weitere Seite an
+  // ("Weitere laden").
+  async function loadVerlaufPage(reset){
+    const f = state.verlaufFilter;
+    if(reset){
+      state.verlaufData.items = [];
+      state.verlaufData.offset = 0;
+    }
+    state.verlaufData.loading = true;
+    render();
+    const payload = { action:'list_transactions', limit:100, offset: state.verlaufData.offset };
+    if(f.memberId) payload.memberId = f.memberId;
+    if(f.type) payload.type = f.type;
+    if(f.from) payload.from = new Date(f.from + 'T00:00:00').getTime();
+    if(f.to) payload.to = new Date(f.to + 'T23:59:59').getTime();
+    const r = await apiAction(payload);
+    state.verlaufData.loading = false;
+    if(r.ok && r.data){
+      state.verlaufData.items = state.verlaufData.items.concat(r.data.transactions);
+      state.verlaufData.total = r.data.total;
+      state.verlaufData.offset += r.data.transactions.length;
+    }
+    state.verlaufData.filterKey = JSON.stringify(f);
+    render();
+  }
+
   function renderVerlauf(){
     const wrap = document.createElement('div');
+    const f = state.verlaufFilter;
+    const filterActive = !!(f.memberId || f.type || f.from || f.to);
+    const d = state.verlaufData;
+
+    // Filter hat sich geändert (oder erster Aufruf) -> im Hintergrund neu laden.
+    if(d.filterKey !== JSON.stringify(f) && !d.loading){
+      loadVerlaufPage(true);
+    }
+
     const card = el(`
       <div class="card">
         <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px;">
           <div class="section-title" style="margin:0;">Buchungsverlauf</div>
-          ${state.transactions.length>0 ? '<button class="btn danger" id="clearHistoryBtn" style="padding:6px 12px; font-size:12.5px;">🔒 Verlauf löschen</button>' : ''}
+          ${d.total>0 ? '<button class="btn danger" id="clearHistoryBtn" style="padding:6px 12px; font-size:12.5px;">🔒 Verlauf löschen</button>' : ''}
         </div>
       </div>
     `);
     const clearBtn = card.querySelector('#clearHistoryBtn');
     if(clearBtn){
       clearBtn.addEventListener('click', ()=>{
-        openOwnerPinModal(()=>{
+        openOwnerPinModal((ownerPin)=>{
           const really = confirm(
             'Wirklich den GESAMTEN Buchungsverlauf unwiderruflich löschen?\n\n' +
             'Alle Salden werden dadurch auf 0,00 € zurückgesetzt. Mitglieder und Produkte bleiben erhalten.'
           );
           if(!really) return;
-          state.transactions = [];
-          saveTransactions().then(ok=>{
-            if(ok) toast('Buchungsverlauf gelöscht – Salden zurückgesetzt');
+          apiAction({ action:'clear_transactions', confirmPin: ownerPin }).then(r=>{
+            if(r.ok){
+              state.balances = {};
+              state.verlaufData = { filterKey:null, items:[], total:0, offset:0, loading:false };
+              toast('Buchungsverlauf gelöscht – Salden zurückgesetzt');
+            } else {
+              toast('Löschen fehlgeschlagen.');
+            }
             render();
           });
         });
       });
     }
-    if(state.transactions.length===0){
-      card.appendChild(el(`<div class="empty">Noch keine Buchungen.</div>`));
-      wrap.appendChild(card);
-      return wrap;
-    }
 
     // ---- Filterleiste ----
-    const f = state.verlaufFilter;
     const membersForFilter = state.members.slice().sort((a,b)=> fullName(a).localeCompare(fullName(b)));
     const filterCard = el(`
       <div class="card">
@@ -1675,29 +1730,12 @@
     });
     wrap.appendChild(filterCard);
 
-    const filtered = state.transactions.filter(t=>{
-      if(f.memberId && t.memberId !== f.memberId) return false;
-      if(f.type==='order' && t.type!=='order') return false;
-      if(f.type==='payment' && !(t.type==='payment' && t.amount>=0)) return false;
-      if(f.type==='korrektur' && !(t.type==='payment' && t.amount<0)) return false;
-      if(f.from){
-        const fromTs = new Date(f.from + 'T00:00:00').getTime();
-        if(t.ts < fromTs) return false;
-      }
-      if(f.to){
-        const toTs = new Date(f.to + 'T23:59:59').getTime();
-        if(t.ts > toTs) return false;
-      }
-      return true;
-    });
-
-    if(filtered.length===0){
-      card.appendChild(el(`<div class="empty">Keine Buchungen für diesen Filter.</div>`));
+    if(d.items.length===0){
+      card.appendChild(el(`<div class="empty">${d.loading ? 'Lade …' : (filterActive ? 'Keine Buchungen für diesen Filter.' : 'Noch keine Buchungen.')}</div>`));
       wrap.appendChild(card);
       return wrap;
     }
 
-    const sorted = filtered.slice().sort((a,b)=>b.ts-a.ts);
     const table = el(`
       <table>
         <thead><tr><th>Datum</th><th>Mitglied</th><th>Art</th><th></th><th class="num">Betrag</th></tr></thead>
@@ -1705,7 +1743,7 @@
       </table>
     `);
     const tbody = table.querySelector('tbody');
-    sorted.forEach(t=>{
+    d.items.forEach(t=>{
       const m = state.members.find(mm=>mm.id===t.memberId);
       const date = new Date(t.ts).toLocaleString('de-DE', {day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit'});
       if(t.type==='order'){
@@ -1741,6 +1779,16 @@
       }
     });
     card.appendChild(table);
+
+    if(d.items.length < d.total){
+      const moreBtn = el(`<button class="btn ghost" style="width:100%; margin-top:12px;">Weitere laden (${d.items.length} von ${d.total})</button>`);
+      moreBtn.disabled = d.loading;
+      moreBtn.addEventListener('click', ()=> loadVerlaufPage(false));
+      card.appendChild(moreBtn);
+    } else if(d.total > d.items.length){
+      // (unreachable normally, kept as safety net for inconsistent state)
+    }
+
     wrap.appendChild(card);
     return wrap;
   }
