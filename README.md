@@ -34,8 +34,11 @@ Die vollständige Entstehungsgeschichte und alle Änderungen stehen in
 index.html          Die komplette App (UI + Logik) als einzelne Datei
 api.php              Backend: einfacher Key-Value-Speicher über MySQL/MariaDB
 config.php            Datenbank-Zugangsdaten
-docker-compose.yml    Betrieb als zwei Container (App + MariaDB), z. B. auf Unraid
-web/Dockerfile        PHP/Apache-Image mit pdo_mysql-Erweiterung
+docker-compose.yml    Betrieb als drei Container (App + MariaDB + Backup), z. B. auf Unraid
+web/Dockerfile        PHP/Apache-Image mit pdo_mysql-Erweiterung + Gzip
+web/deflate.conf       Apache-Konfiguration für Gzip-Kompression (Docker)
+.htaccess             Gzip-Kompression für Strato/XAMPP (ohne Docker)
+backup.sh             Tägliches automatisches Datenbank-Backup (Docker)
 .env                  Zugangsdaten für den Docker-Compose-Stack
 ```
 
@@ -59,6 +62,33 @@ kopieren, `config.php` anpassen (`host: localhost`, `user: root`,
 App-Dateien wie im Repo strukturiert ablegen, `.env` mit echten Passwörtern
 befüllen, per Docker Compose Manager (oder `docker compose up -d`) starten.
 Gzip-Kompression ist hier bereits im Dockerfile aktiviert.
+
+## Backups
+
+Nur im Docker-Betrieb (Unraid): ein dritter Container (`db-backup`) erstellt
+automatisch einmal täglich einen komprimierten Datenbank-Dump und legt ihn
+unter `/mnt/user/appdata/tresen/backups` ab. Ältere Backups als 30 Tage
+werden automatisch gelöscht (einstellbar über `RETENTION_DAYS` in
+`docker-compose.yml`).
+
+**Wiederherstellen** (Beispiel, Dateiname anpassen):
+```bash
+gunzip -c /mnt/user/appdata/tresen/backups/tresen_20260101_030000.sql.gz | \
+  docker exec -i tresen-db mysql -u root -p"$MYSQL_ROOT_PASSWORD" tresen
+```
+
+**Empfehlung**: Die Backups liegen auf demselben Server wie die Datenbank
+selbst - schützt vor einem kaputten Datenbank-Volume, aber nicht vor einem
+Totalausfall des Servers (Diebstahl, Defekt, Feuer). Für zusätzliche
+Sicherheit den `backups`-Ordner regelmäßig auf ein anderes Gerät oder einen
+Cloud-Speicher kopieren, z. B. per Unraid-eigenem Backup-Plugin oder einem
+einfachen `rsync`/`rclone`-Cronjob.
+
+Wer die App auf einem eigenen Webspace (Strato) oder lokal (XAMPP) betreibt,
+sollte Backups stattdessen über die dort angebotenen Mittel einrichten
+(bei Strato z. B. den phpMyAdmin-Export oder ein im Kundenmenü verfügbares
+automatisches Datenbank-Backup) - der `db-backup`-Container ist Docker-
+spezifisch.
 
 ## Sicherheit
 

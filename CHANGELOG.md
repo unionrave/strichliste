@@ -250,6 +250,41 @@ per Bar/Überweisung/SEPA abgerechnet.
 - Mit einem echten Apache-Testserver verifiziert (Konfigurationstest plus
   tatsächliche `Content-Encoding: gzip`-Antwort und Größenvergleich).
 
+## v1.19.2 – Automatische Datenbank-Backups
+- **Neuer `db-backup`-Container** (nur Docker/Unraid): erstellt beim Start und
+  danach täglich automatisch einen komprimierten Dump der kompletten
+  Datenbank, unabhängig von einem Cronjob auf dem Host.
+- Ältere Backups als 30 Tage werden automatisch entfernt (einstellbar über
+  `RETENTION_DAYS`), damit der Speicherplatz nicht unbegrenzt wächst.
+- Backups liegen in einem eigenen Ordner getrennt vom Datenbank-Datenverzeichnis
+  selbst - ein Problem mit dem DB-Volume betrifft die Backups nicht.
+- Sauberes Fehlverhalten bei einem fehlgeschlagenen Dump: es entsteht keine
+  kaputte, aber als "erfolgreich" gemeldete Backup-Datei mehr (ursprünglicher
+  Entwurf hatte hier eine Schwachstelle beim direkten Durchleiten in die
+  Komprimierung, die einen fehlgeschlagenen Dump verschluckt hätte).
+- **Kompatibilität mit neueren MariaDB-Images**: Das Dump-Werkzeug heißt dort
+  nur noch `mariadb-dump` statt `mysqldump`. Das Skript erkennt beim Start
+  automatisch, welches der beiden Kommandos vorhanden ist, und nutzt es
+  entsprechend. Fehlt beides, bricht es mit einer klaren Fehlermeldung ab,
+  statt kryptisch mit "not found" zu scheitern.
+- **Fix für Unraid-User-Shares**: Datenbank-Dump und Komprimierung laufen
+  vollständig im lokalen, ephemeren Dateisystem des Containers (`/tmp`). Auf
+  den gemounteten Unraid-Share (FUSE-Dateisystem `shfs`) wird nur noch die
+  bereits fertige, vollständige Backup-Datei einmalig kopiert - dort wird
+  nichts mehr geschrieben und gleich wieder gelöscht. Ohne diesen Fix konnte
+  ein kurz nacheinander geschriebenes-und-gelöschtes File dazu führen, dass
+  Unraid es nicht sauber entfernt, sondern stattdessen als
+  `.fuse_hiddenXXXXXXXX`-Datei ablegt - der Backup-Ordner blieb dadurch leer.
+  Der Zielordner wird zusätzlich beim Start defensiv selbst angelegt
+  (`mkdir -p`), falls er noch nicht existiert.
+- README um Anleitung zum Wiederherstellen eines Backups sowie Empfehlungen
+  für zusätzliche externe Sicherungen ergänzt.
+- Betrifft ausschließlich den Docker/Unraid-Betrieb. Für Strato/XAMPP verweist
+  die README auf die dort jeweils angebotenen Backup-Möglichkeiten.
+- Alle Fälle (Erfolg, Fehlschlag, fehlender Zielordner, beide Dump-Kommando-
+  Varianten) mit einem echten MariaDB-Server nachgestellt und verifiziert,
+  bevor es ausgeliefert wurde.
+
 ---
 
 ## Architektur-Überblick (Stand heute)
