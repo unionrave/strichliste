@@ -212,6 +212,29 @@ per Bar/Überweisung/SEPA abgerechnet.
   betroffen, da es dafür keine vergleichbare serverseitige Komponente gibt -
   sie ist aber ohnehin nicht die produktiv genutzte App.
 
+## v1.19.0 – Buchungshistorie: von JSON-Block auf echte Tabelle umgestellt
+- **Performance-Fix gegen wachsende Verlangsamung**: Bisher lag die komplette
+  Buchungshistorie als ein einzelner JSON-Text unter einem Schlüssel in der
+  Datenbank - jede neue Buchung musste diesen kompletten Block neu schreiben.
+  Mit wachsender Vereinsgeschichte (mehrere tausend Buchungen über Jahre)
+  wäre jede einzelne neue Buchung spürbar langsamer geworden.
+- Buchungen liegen jetzt in einer **eigenen Datenbanktabelle** (`transactions`,
+  eine Zeile pro Buchung, indiziert nach Mitglied/Zeitstempel/Art). Eine neue
+  Buchung ist unabhängig von der Historiengröße immer gleich schnell.
+- **Salden werden per SQL-Summe berechnet** statt im Browser aus der
+  kompletten Historie zusammengerechnet - beim Laden der App wird nur noch
+  ein kleines Salden-Objekt übertragen, nicht mehr jede einzelne Buchung.
+- **Verlauf lädt seitenweise** (100 Einträge, „Weitere laden"-Button) und
+  filtert jetzt direkt in der Datenbank statt im Browser - macht sich vor
+  allem bei sehr langer Historie bemerkbar.
+- **Automatische Einmal-Migration**: Bestehende Installationen übernehmen die
+  bisherige Historie beim ersten Laden nach dem Update automatisch in die
+  neue Tabelle. Der alte Datenblock wird dabei nicht gelöscht, sondern als
+  Sicherheitsnetz unter einem Backup-Schlüssel aufbewahrt.
+- „Verlauf löschen" verlangt jetzt zusätzlich eine serverseitig geprüfte
+  Bestätigung mit dem Ersteller-PIN (bisher nur clientseitig geprüft),
+  konsistent mit dem PIN-Sicherheitsfix aus v1.18.3.
+
 ---
 
 ## Architektur-Überblick (Stand heute)
@@ -219,7 +242,7 @@ per Bar/Überweisung/SEPA abgerechnet.
 | Baustein | Zweck |
 |---|---|
 | `index.html` | komplette Anwendung (UI + Logik), eine einzelne Datei |
-| `api.php` | Key-Value-Backend (GET/POST) über MySQL/MariaDB |
+| `api.php` | Backend über MySQL/MariaDB: Key-Value-Speicher (Mitglieder, Produkte, Einstellungen, PINs) + eigene `transactions`-Tabelle für Buchungen |
 | `config.php` | Datenbank-Zugangsdaten (lokal) bzw. liest ENV-Variablen (Docker) |
 | `docker-compose.yml` + `web/Dockerfile` | Betrieb als zwei Container (App + DB) auf Unraid |
 | `.env` | Zugangsdaten für den Docker-Compose-Stack |
@@ -229,3 +252,6 @@ per Bar/Überweisung/SEPA abgerechnet.
 1. **Theke-PIN** – Zugang zur App allgemein (Bestellungen buchen, Verlauf ansehen)
 2. **Admin-PIN** – zusätzlich: Übersicht/Zahlungen, Mitglieder, Produkte verwalten
 3. **Ersteller-PIN** – ausschließlich: kompletten Buchungsverlauf löschen
+
+PIN-Prüfung läuft seit v1.18.3 ausschließlich serverseitig (`api.php`); die
+PIN-Werte selbst verlassen die Datenbank nie in Richtung Browser.
