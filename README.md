@@ -42,26 +42,31 @@ web/Dockerfile        PHP/Apache-Image mit pdo_mysql-Erweiterung
 ## Betrieb – drei Wege
 
 ### 1. Eigener Webspace (z. B. Strato)
-`index.html`, `api.php`, `config.php` per FTP hochladen, in `config.php` die
-Datenbank-Zugangsdaten eintragen, Seite aufrufen – die Tabelle wird beim ersten
-Laden automatisch angelegt.
+`index.html`, `api.php`, `config.php` **und `.htaccess`** per FTP hochladen,
+in `config.php` die Datenbank-Zugangsdaten eintragen, Seite aufrufen – die
+Tabellen werden beim ersten Laden automatisch angelegt. Die `.htaccess`
+aktiviert Gzip-Kompression (kleinere Übertragung, spürbar bei langsamer
+Internetverbindung).
 
 ### 2. Lokal (XAMPP)
 XAMPP installieren, Apache + MySQL/MariaDB starten, leere Datenbank per
-phpMyAdmin anlegen, Dateien nach `htdocs/tresen/` kopieren, `config.php`
-anpassen (`host: localhost`, `user: root`, `password: ''`).
+phpMyAdmin anlegen, Dateien (inkl. `.htaccess`) nach `htdocs/tresen/`
+kopieren, `config.php` anpassen (`host: localhost`, `user: root`,
+`password: ''`).
 
 ### 3. Unraid (Docker Compose)
-`docker-compose.yml`, `web/Dockerfile` und die App-Dateien wie im Repo
-strukturiert ablegen, `.env` mit echten Passwörtern befüllen, per Docker
-Compose Manager (oder `docker compose up -d`) starten.
+`docker-compose.yml`, `web/Dockerfile`, `web/deflate.conf` und die
+App-Dateien wie im Repo strukturiert ablegen, `.env` mit echten Passwörtern
+befüllen, per Docker Compose Manager (oder `docker compose up -d`) starten.
+Gzip-Kompression ist hier bereits im Dockerfile aktiviert.
 
 ## Sicherheit
 
-Der PIN-Schutz ist ein pragmatischer, clientseitiger Schutz für den
-Vereinskontext – ausreichend, um zufällige Mitglieder von der Verwaltung
-fernzuhalten, aber keine kryptographische Absicherung gegen gezielte Angriffe
-auf Quellcode/Netzwerkverkehr.
+PINs werden ausschließlich serverseitig geprüft (`api.php`) - der Browser
+bekommt nie einen der drei PIN-Werte selbst zu sehen, nur das Ergebnis der
+Prüfung. Das ist trotzdem ein pragmatischer, kein kryptographisch gehärteter
+Schutz für den Vereinskontext - ausreichend, um zufällige Mitglieder von der
+Verwaltung fernzuhalten, aber kein Ersatz für echte Benutzerkonten.
 
 ---
 

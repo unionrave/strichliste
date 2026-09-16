@@ -235,6 +235,21 @@ per Bar/Überweisung/SEPA abgerechnet.
   Bestätigung mit dem Ersteller-PIN (bisher nur clientseitig geprüft),
   konsistent mit dem PIN-Sicherheitsfix aus v1.18.3.
 
+## v1.19.1 – Gzip-Kompression aktiviert
+- **Performance bei langsamer Internetverbindung**: `index.html` (inzwischen
+  rund 750 KB durch eingebettete Schriftarten und die Barcode-Bibliothek)
+  sowie die JSON-Antworten von `api.php` werden jetzt komprimiert
+  ausgeliefert. Gemessen: rund 50 % kleinere Übertragung für `index.html`
+  (760 KB → 365 KB).
+- **Docker/Unraid**: `web/Dockerfile` aktiviert das Apache-Modul `mod_deflate`
+  und bindet die neue `web/deflate.conf` ein - automatisch beim nächsten
+  Container-Neubau (`docker compose up -d --build`) aktiv.
+- **Strato/XAMPP**: neue `.htaccess`-Datei im Repo-Hauptverzeichnis, die
+  dieselbe Kompression ohne Zugriff auf die zentrale Server-Konfiguration
+  aktiviert - einfach mit hochladen/kopieren.
+- Mit einem echten Apache-Testserver verifiziert (Konfigurationstest plus
+  tatsächliche `Content-Encoding: gzip`-Antwort und Größenvergleich).
+
 ---
 
 ## Architektur-Überblick (Stand heute)
