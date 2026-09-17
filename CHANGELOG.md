@@ -285,6 +285,37 @@ per Bar/Überweisung/SEPA abgerechnet.
   Varianten) mit einem echten MariaDB-Server nachgestellt und verifiziert,
   bevor es ausgeliefert wurde.
 
+## v1.19.3 – Kritischer Fix: Verlauf blieb nach einem Fehlschlag dauerhaft leer
+- **Hauptursache gefunden und behoben**: Schlug das Laden des Verlaufs einmal
+  fehl (z. B. durch einen kurzen Netzwerk- oder Serverfehler), merkte sich
+  die App das fälschlich als „bereits erledigt" und versuchte es **nie
+  wieder erneut** - der Verlauf blieb dadurch dauerhaft leer bzw. veraltet
+  stehen, obwohl im Hintergrund weiter normal gebucht wurde. Betrifft nur die
+  Anzeige, keine echten Datenverluste: alle Buchungen waren die ganze Zeit
+  korrekt in der Datenbank gespeichert.
+- Ein fehlgeschlagener Ladeversuch löst jetzt beim nächsten Öffnen des
+  Verlaufs automatisch einen neuen Versuch aus; bleibt der Fehler bestehen,
+  erscheint ein eigener Hinweis mit „Erneut versuchen"-Button statt einer
+  stillen, dauerhaft leeren Ansicht.
+- **`api.php` außerdem grundlegend abgesichert**: Alle Datenbank-Aktionen
+  laufen jetzt in einer zentralen Fehlerbehandlung. Ein unerwarteter
+  Datenbankfehler führt dadurch immer zu einer sauberen, für die App
+  verständlichen Fehlermeldung (und einem nachvollziehbaren Eintrag im
+  Server-Log) statt zu einer rohen PHP-Fehlerausgabe oder einer scheinbar
+  erfolgreichen Antwort ohne tatsächlich gespeicherte Daten.
+- Mit einem echten Server nachgestellt und verifiziert (provozierter
+  Datenbankfehler, Wiederherstellung ohne Endlosschleife).
+
+## v1.19.4 – Summenanzeige im Verlauf
+- Über der Buchungsliste im Verlauf stehen jetzt drei Summen: **Bestellungen
+  (Umsatz)**, **Zahlungen erhalten** und **Korrekturen** - berechnet direkt
+  in der Datenbank passend zum aktuell gesetzten Filter (Mitglied, Art,
+  Zeitraum), nicht nur über die gerade geladene Seite.
+- Funktioniert mit „Weitere laden": die Summen bleiben korrekt, auch wenn
+  noch nicht alle passenden Buchungen im Browser geladen sind.
+- Mit echten Testdaten verifiziert, inklusive kombiniertem Mitglieds- und
+  Zeitraumfilter.
+
 ---
 
 ## Architektur-Überblick (Stand heute)

@@ -127,6 +127,12 @@ function migrate_legacy_transactions_if_needed($pdo) {
 
 $method = $_SERVER['REQUEST_METHOD'];
 
+// Ab hier alles in try/catch: jeder unerwartete Datenbankfehler soll als
+// saubere JSON-Antwort mit HTTP 500 zurückkommen (und im Server-Log
+// nachvollziehbar sein), statt als rohe PHP-Fehlerseite oder - schlimmer -
+// als scheinbar erfolgreiche Antwort ohne tatsächlich gespeicherte Daten.
+try {
+
 if ($method === 'GET') {
     $key = isset($_GET['key']) ? $_GET['key'] : '';
     if ($key === '') {
@@ -335,6 +341,24 @@ if ($method === 'POST') {
         $countStmt->execute($params);
         $total = (int)$countStmt->fetch(PDO::FETCH_ASSOC)['c'];
 
+        // Summen passend zum aktuellen Filter (Mitglied/Art/Zeitraum) -
+        // unabhängig von Pagination, damit "Weitere laden" die Summe nicht
+        // verändert und sie auch bei nur teilweise geladener Liste stimmt.
+        $sumStmt = $pdo->prepare(
+            "SELECT
+                SUM(CASE WHEN type = 'order' THEN total ELSE 0 END) AS order_sum,
+                SUM(CASE WHEN type = 'payment' AND amount >= 0 THEN amount ELSE 0 END) AS payment_sum,
+                SUM(CASE WHEN type = 'payment' AND amount < 0 THEN -amount ELSE 0 END) AS correction_sum
+             FROM transactions $whereSql"
+        );
+        $sumStmt->execute($params);
+        $sumRow = $sumStmt->fetch(PDO::FETCH_ASSOC);
+        $summary = [
+            'orderSum' => (float)($sumRow['order_sum'] ?? 0),
+            'paymentSum' => (float)($sumRow['payment_sum'] ?? 0),
+            'correctionSum' => (float)($sumRow['correction_sum'] ?? 0),
+        ];
+
         $limit = isset($input['limit']) ? max(1, min(500, (int)$input['limit'])) : 100;
         $offset = isset($input['offset']) ? max(0, (int)$input['offset']) : 0;
 
@@ -344,7 +368,7 @@ if ($method === 'POST') {
         $stmt->execute($params);
         $rows = array_map('tx_row_to_array', $stmt->fetchAll(PDO::FETCH_ASSOC));
 
-        echo json_encode(['transactions' => $rows, 'total' => $total]);
+        echo json_encode(['transactions' => $rows, 'total' => $total, 'summary' => $summary]);
         exit;
     }
 
@@ -391,3 +415,12 @@ if ($method === 'POST') {
 
 http_response_code(405);
 echo json_encode(['error' => 'method_not_allowed']);
+
+} catch (Throwable $e) {
+    // Ins Server-Log schreiben (sichtbar z. B. über "docker logs tresen-web"),
+    // aber nur eine generische Fehlermeldung an den Client zurückgeben -
+    // keine internen Details/Stacktraces nach außen geben.
+    error_log('api.php Fehler: ' . $e->getMessage());
+    http_response_code(500);
+    echo json_encode(['error' => 'server_error']);
+}

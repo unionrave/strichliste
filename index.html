@@ -384,7 +384,7 @@
   "use strict";
 
   // Bei jedem neuen Release hier aktualisieren (erscheint automatisch im Footer).
-  const APP_VERSION = 'v1.19.2';
+  const APP_VERSION = 'v1.19.4';
   document.getElementById('appFooter').textContent =
     'Erstellt von Marco Weber für SG Germania Binsfeld Tennis · ' + APP_VERSION;
 
@@ -421,7 +421,7 @@
     // Zwischengespeicherte, seitenweise geladene Verlaufs-Einträge für den
     // aktuellen Filter - wird ungültig (und neu geladen), sobald sich der
     // Filter ändert oder eine neue Buchung/Löschung stattfand.
-    verlaufData: { filterKey: null, items: [], total: 0, offset: 0, loading: false },
+    verlaufData: { filterKey: null, attemptedKey: null, items: [], total: 0, offset: 0, loading: false, summary: { orderSum: 0, paymentSum: 0, correctionSum: 0 } },
   };
 
   const ADMIN_VIEWS = ['uebersicht','mitglieder','produkte'];
@@ -1639,9 +1639,20 @@
     if(r.ok && r.data){
       state.verlaufData.items = state.verlaufData.items.concat(r.data.transactions);
       state.verlaufData.total = r.data.total;
+      state.verlaufData.summary = r.data.summary || { orderSum:0, paymentSum:0, correctionSum:0 };
       state.verlaufData.offset += r.data.transactions.length;
+      // filterKey nur bei Erfolg setzen: schlägt das Laden fehl (z. B. kurzer
+      // Netzwerk-/Serverfehler), bleibt der Filter "nicht erledigt" und kann
+      // erneut versucht werden, statt dauerhaft leer/veraltet stehen zu bleiben.
+      state.verlaufData.filterKey = JSON.stringify(f);
+    } else {
+      toast('Verlauf konnte nicht geladen werden.');
     }
-    state.verlaufData.filterKey = JSON.stringify(f);
+    // In jedem Fall merken, dass für diesen Filterstand schon ein Versuch
+    // lief - verhindert eine Endlosschleife aus Neu-Rendern und Neu-Laden,
+    // falls der Fehler dauerhaft ist. Ein "Erneut versuchen"-Klick oder eine
+    // Filteränderung setzt das wieder zurück.
+    state.verlaufData.attemptedKey = JSON.stringify(f);
     render();
   }
 
@@ -1652,7 +1663,9 @@
     const d = state.verlaufData;
 
     // Filter hat sich geändert (oder erster Aufruf) -> im Hintergrund neu laden.
-    if(d.filterKey !== JSON.stringify(f) && !d.loading){
+    // attemptedKey verhindert, dass ein dauerhafter Fehler bei jedem Rendern
+    // sofort einen neuen (aussichtslosen) Versuch auslöst.
+    if(d.filterKey !== JSON.stringify(f) && d.attemptedKey !== JSON.stringify(f) && !d.loading){
       loadVerlaufPage(true);
     }
 
@@ -1676,7 +1689,7 @@
           apiAction({ action:'clear_transactions', confirmPin: ownerPin }).then(r=>{
             if(r.ok){
               state.balances = {};
-              state.verlaufData = { filterKey:null, items:[], total:0, offset:0, loading:false };
+              state.verlaufData = { filterKey:null, attemptedKey:null, items:[], total:0, offset:0, loading:false };
               toast('Buchungsverlauf gelöscht – Salden zurückgesetzt');
             } else {
               toast('Löschen fehlgeschlagen.');
@@ -1730,8 +1743,30 @@
     });
     wrap.appendChild(filterCard);
 
+    const s = d.summary;
+    wrap.appendChild(el(`
+      <div class="summary-cards">
+        <div class="card"><div class="big mono">${fmt(s.orderSum)}</div><div class="lbl">Bestellungen (Umsatz)</div></div>
+        <div class="card"><div class="big mono">${fmt(s.paymentSum)}</div><div class="lbl">Zahlungen erhalten</div></div>
+        <div class="card"><div class="big mono">${fmt(s.correctionSum)}</div><div class="lbl">Korrekturen</div></div>
+      </div>
+    `));
+
     if(d.items.length===0){
-      card.appendChild(el(`<div class="empty">${d.loading ? 'Lade …' : (filterActive ? 'Keine Buchungen für diesen Filter.' : 'Noch keine Buchungen.')}</div>`));
+      const currentKey = JSON.stringify(f);
+      const loadFailed = !d.loading && d.attemptedKey === currentKey && d.filterKey !== currentKey;
+      if(loadFailed){
+        const errBox = el(`
+          <div class="empty">
+            Verlauf konnte nicht geladen werden.<br>
+            <button class="btn ghost" id="verlaufRetryBtn" style="margin-top:10px;">Erneut versuchen</button>
+          </div>
+        `);
+        errBox.querySelector('#verlaufRetryBtn').addEventListener('click', ()=> loadVerlaufPage(true));
+        card.appendChild(errBox);
+      } else {
+        card.appendChild(el(`<div class="empty">${d.loading ? 'Lade …' : (filterActive ? 'Keine Buchungen für diesen Filter.' : 'Noch keine Buchungen.')}</div>`));
+      }
       wrap.appendChild(card);
       return wrap;
     }
