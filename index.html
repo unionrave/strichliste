@@ -384,7 +384,7 @@
   "use strict";
 
   // Bei jedem neuen Release hier aktualisieren (erscheint automatisch im Footer).
-  const APP_VERSION = 'v1.20.0';
+  const APP_VERSION = 'v1.21.0';
   document.getElementById('appFooter').textContent =
     'Erstellt von Marco Weber für SG Germania Binsfeld Tennis · ' + APP_VERSION;
 
@@ -406,10 +406,19 @@
         verlaufFilter: true,
         verlaufSummary: true,
         fullscreenButton: true,
+        materialwirtschaft: true,
       },
     },
     members: [],
     products: [],
+    // Materialwirtschaft: Gebinde-/Lagerbestand je Produkt (max. ein Eintrag
+    // pro Produkt). Wird wie Mitglieder/Produkte als einfacher JSON-Datensatz
+    // gespeichert, da die Anzahl an Positionen klein bleibt.
+    inventory: [],
+    // Protokoll der Bestandskorrekturen (Inventur/Schwund) - zeigt, wenn nach
+    // einer Zählung weniger vorhanden war als laut gebuchten Bestellungen
+    // erwartet: ein Hinweis darauf, dass nicht alles gebucht wurde.
+    inventoryLog: [],
     // Salden je Mitglied (memberId -> Zahl), kommen fertig aggregiert vom
     // Server (SQL-Summe) statt aus der kompletten Buchungshistorie im Browser
     // berechnet zu werden. Die Historie selbst wird nur noch bei Bedarf
@@ -438,7 +447,7 @@
     verlaufData: { filterKey: null, attemptedKey: null, items: [], total: 0, offset: 0, loading: false, summary: { orderSum: 0, paymentSum: 0, correctionSum: 0 } },
   };
 
-  const ADMIN_VIEWS = ['uebersicht','mitglieder','produkte'];
+  const ADMIN_VIEWS = ['uebersicht','mitglieder','produkte','material'];
 
   async function loadAll(){
     try {
@@ -446,8 +455,8 @@
       // (Buchungshistorie als ein einzelner JSON-Block) auf die neue Tabelle -
       // no-op, falls schon migriert oder eine neue Installation.
       await apiAction({ action: 'migrate_transactions' });
-      const [s, m, p, authStatus, balancesRes] = await Promise.all([
-        safeGet('settings'), safeGet('members'), safeGet('products'), fetchAuthStatus(), apiAction({ action:'get_balances' })
+      const [s, m, p, inv, invLog, authStatus, balancesRes] = await Promise.all([
+        safeGet('settings'), safeGet('members'), safeGet('products'), safeGet('inventory'), safeGet('inventoryLog'), fetchAuthStatus(), apiAction({ action:'get_balances' })
       ]);
       if (s) {
         const loadedSettings = JSON.parse(s.value);
@@ -472,6 +481,8 @@
         if(mem.lastName === undefined) mem.lastName = '';
       });
       if (p) state.products = JSON.parse(p.value);
+      if (inv) state.inventory = JSON.parse(inv.value);
+      if (invLog) state.inventoryLog = JSON.parse(invLog.value);
       if (authStatus) state.authStatus = authStatus;
       if (balancesRes.ok && balancesRes.data) state.balances = balancesRes.data.balances || {};
     } catch(e){ console.error('Ladefehler', e); }
@@ -530,6 +541,8 @@
 
   function saveMembers(){ return saveKey('members', state.members); }
   function saveProducts(){ return saveKey('products', state.products); }
+  function saveInventory(){ return saveKey('inventory', state.inventory); }
+  function saveInventoryLog(){ return saveKey('inventoryLog', state.inventoryLog); }
   function saveSettings(){ return saveKey('settings', state.settings); }
 
   function balanceOf(memberId){
@@ -811,6 +824,7 @@
           ${tabBtn('mitglieder','Mitglieder')}
           ${tabBtn('produkte','Produkte')}
           ${tabBtn('verlauf','Verlauf')}
+          ${state.settings.modules.materialwirtschaft ? tabBtn('material','Material', lowStockCount() || null) : ''}
           ${state.ownerUnlocked ? tabBtn('module','Module') : ''}
         </nav>
       </header>
@@ -844,9 +858,10 @@
     return header;
   }
 
-  function tabBtn(view, label){
+  function tabBtn(view, label, badge){
     const showLock = ADMIN_VIEWS.includes(view) && !state.adminUnlocked;
-    return `<button data-view="${view}" class="${state.view===view?'active':''}">${showLock?'🔒 ':''}${label}</button>`;
+    const badgeHtml = badge ? `<span style="background:var(--danger); color:#fff; border-radius:999px; font-size:11px; padding:1px 6px; margin-left:5px; font-family:'Inter',sans-serif;">${badge}</span>` : '';
+    return `<button data-view="${view}" class="${state.view===view?'active':''}">${showLock?'🔒 ':''}${label}${badgeHtml}</button>`;
   }
 
   function renderView(){
@@ -856,9 +871,16 @@
       case 'mitglieder': return renderMitglieder();
       case 'produkte': return renderProdukte();
       case 'verlauf': return renderVerlauf();
+      case 'material': return state.settings.modules.materialwirtschaft ? renderMaterial() : renderTheke();
       case 'module': return state.ownerUnlocked ? renderModule() : renderTheke();
       default: return document.createElement('div');
     }
+  }
+
+  // Anzahl der Positionen, deren Bestand die Nachbestellschwelle erreicht/
+  // unterschritten hat - fürs kleine Warn-Badge im Tab.
+  function lowStockCount(){
+    return state.inventory.filter(i => i.active !== false && i.stockUnits <= i.reorderThresholdUnits).length;
   }
 
   // ---------- THEKE ----------
@@ -1037,6 +1059,7 @@
         const tx = { id: uid(), type:'order', memberId: member.id, items, total, ts: Date.now() };
         const ok = await addTransaction(tx);
         if(ok){
+          await deductInventoryForOrder(items);
           toast('Gebucht: ' + fmt(total) + ' für ' + fullName(member));
           closeOverlay();
         } else {
@@ -1869,6 +1892,299 @@
     return wrap;
   }
 
+  // ---------- MATERIAL (Materialwirtschaft) ----------
+  function renderMaterial(){
+    const wrap = document.createElement('div');
+
+    const lowCount = lowStockCount();
+    wrap.appendChild(el(`
+      <div class="summary-cards">
+        <div class="card"><div class="big">${state.inventory.filter(i=>i.active!==false).length}</div><div class="lbl">Geführte Positionen</div></div>
+        <div class="card"><div class="big" style="${lowCount>0?'color:var(--danger);':''}">${lowCount}</div><div class="lbl">Zum Nachbestellen</div></div>
+      </div>
+    `));
+
+    // ---- Neues Gebinde anlegen ----
+    const productsWithoutInventory = state.products.filter(p =>
+      !state.inventory.some(i => i.productId === p.id && i.active !== false)
+    );
+    const addCard = el(`<div class="card"><div class="section-title">Gebinde anlegen</div></div>`);
+    if(productsWithoutInventory.length === 0){
+      addCard.appendChild(el(`<div class="empty" style="padding:12px 0;">Alle Produkte haben bereits ein Gebinde, oder es sind noch keine Produkte angelegt.</div>`));
+    } else {
+      const form = el(`
+        <div class="row">
+          <div class="field" style="flex:1; min-width:160px; margin-bottom:0;">
+            <label>Produkt</label>
+            <select id="invProduct">
+              ${productsWithoutInventory.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field" style="flex:1; min-width:140px; margin-bottom:0;">
+            <label>Gebinde-Name</label>
+            <input type="text" id="invGebindeName" placeholder="z. B. Kasten" />
+          </div>
+          <div class="field" style="flex:1; min-width:120px; margin-bottom:0;">
+            <label>Einheiten/Gebinde</label>
+            <input type="number" id="invUnitsPerGebinde" min="1" step="1" placeholder="z. B. 20" />
+          </div>
+          <div class="field" style="flex:1; min-width:120px; margin-bottom:0;">
+            <label>Start-Bestand (Gebinde)</label>
+            <input type="number" id="invStartGebinde" min="0" step="1" placeholder="0" />
+          </div>
+          <div class="field" style="flex:1; min-width:140px; margin-bottom:0;">
+            <label>Nachbestellen ab (Einheiten)</label>
+            <input type="number" id="invThreshold" min="0" step="1" placeholder="z. B. 20" />
+          </div>
+          <button class="btn" id="addInvBtn">Anlegen</button>
+        </div>
+      `);
+      addCard.appendChild(form);
+      form.querySelector('#addInvBtn').addEventListener('click', async ()=>{
+        const productId = form.querySelector('#invProduct').value;
+        const gebindeName = form.querySelector('#invGebindeName').value.trim();
+        const unitsPerGebinde = parseInt(form.querySelector('#invUnitsPerGebinde').value, 10);
+        const startGebinde = parseInt(form.querySelector('#invStartGebinde').value, 10) || 0;
+        const reorderThresholdUnits = parseInt(form.querySelector('#invThreshold').value, 10) || 0;
+        if(!productId || !gebindeName || !unitsPerGebinde || unitsPerGebinde<1){
+          toast('Bitte Produkt, Gebinde-Name und Einheiten pro Gebinde angeben.'); return;
+        }
+        state.inventory.push({
+          id: uid(), productId, gebindeName, unitsPerGebinde,
+          stockUnits: startGebinde * unitsPerGebinde,
+          reorderThresholdUnits, active: true,
+        });
+        const ok = await saveInventory();
+        if(ok) toast('Gebinde angelegt');
+        render();
+      });
+    }
+    wrap.appendChild(addCard);
+
+    // ---- Liste ----
+    const listCard = el(`<div class="card"><div class="section-title">Lagerbestand</div></div>`);
+    const activeItems = state.inventory.filter(i => i.active !== false);
+    if(activeItems.length === 0){
+      listCard.appendChild(el(`<div class="empty">Noch keine Gebinde angelegt.</div>`));
+    } else {
+      const table = el(`
+        <table>
+          <thead><tr><th>Produkt</th><th>Gebinde</th><th class="num">Bestand</th><th class="num">Schwelle</th><th>Status</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      `);
+      const tbody = table.querySelector('tbody');
+      activeItems.forEach(item=>{
+        const p = state.products.find(pp=>pp.id===item.productId);
+        const gebindeCount = (item.stockUnits / item.unitsPerGebinde);
+        const low = item.stockUnits <= item.reorderThresholdUnits;
+        const tr = el(`
+          <tr>
+            <td>${p ? escapeHtml(p.name) : '<em>gelöscht</em>'}</td>
+            <td>${escapeHtml(item.gebindeName)} (${item.unitsPerGebinde}er)</td>
+            <td class="num mono">${item.stockUnits} <span style="color:var(--muted);">(≈ ${gebindeCount.toFixed(1)})</span></td>
+            <td class="num mono">${item.reorderThresholdUnits}</td>
+            <td>${low ? '<span style="color:var(--danger); font-weight:600;">Nachbestellen!</span>' : '<span style="color:var(--muted);">OK</span>'}</td>
+            <td style="text-align:right; white-space:nowrap;">
+              <button class="icon-btn" data-act="restock" title="Wareneingang erfassen">📦</button>
+              <button class="icon-btn" data-act="correct" title="Bestand korrigieren">✎</button>
+              <button class="icon-btn" data-act="del" title="Löschen">✕</button>
+            </td>
+          </tr>
+        `);
+        tr.querySelector('[data-act="restock"]').addEventListener('click', ()=> openRestockModal(item));
+        tr.querySelector('[data-act="correct"]').addEventListener('click', ()=> openStockCorrectionModal(item));
+        tr.querySelector('[data-act="del"]').addEventListener('click', async ()=>{
+          if(!confirm('Gebinde „'+escapeHtml(item.gebindeName)+'" für dieses Produkt wirklich löschen?')) return;
+          state.inventory = state.inventory.filter(x=>x.id!==item.id);
+          const ok = await saveInventory();
+          if(ok) toast('Gebinde gelöscht');
+          render();
+        });
+        tbody.appendChild(tr);
+      });
+      listCard.appendChild(table);
+    }
+    wrap.appendChild(listCard);
+
+    // ---- Differenz-Historie (Schwundkontrolle) ----
+    const logCard = el(`
+      <div class="card">
+        <div class="section-title">Differenzen bei Bestandskorrekturen</div>
+        <div style="font-size:13px; color:var(--muted); margin-bottom:10px;">
+          Zeigt, wenn bei einer Zählung weniger vorhanden war als laut gebuchten
+          Verkäufen erwartet - ein Hinweis darauf, dass nicht alles gebucht wurde.
+        </div>
+      </div>
+    `);
+    const recentLog = state.inventoryLog.slice().sort((a,b)=>b.ts-a.ts).slice(0, 20);
+    if(recentLog.length === 0){
+      logCard.appendChild(el(`<div class="empty">Noch keine Bestandskorrekturen erfasst.</div>`));
+    } else {
+      const totalMissingUnits = state.inventoryLog.filter(l=>l.diff<0).reduce((s,l)=>s-l.diff, 0);
+      const estValue = state.inventoryLog.filter(l=>l.diff<0).reduce((sum,l)=>{
+        const item = state.inventory.find(i=>i.id===l.itemId);
+        const prod = item ? state.products.find(p=>p.id===item.productId) : null;
+        return sum + (prod ? prod.price * (-l.diff) : 0);
+      }, 0);
+      if(totalMissingUnits > 0){
+        logCard.appendChild(el(`
+          <div style="font-size:13px; color:var(--danger); margin-bottom:10px;">
+            Insgesamt <strong>${totalMissingUnits} Einheiten</strong> weniger als erwartet erfasst
+            (geschätzter Gegenwert: <strong>${fmt(estValue)}</strong>, seit Beginn der Aufzeichnung).
+          </div>
+        `));
+      }
+      const logTable = el(`
+        <table>
+          <thead><tr><th>Datum</th><th>Produkt</th><th class="num">Erwartet</th><th class="num">Gezählt</th><th class="num">Differenz</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      `);
+      const logTbody = logTable.querySelector('tbody');
+      recentLog.forEach(l=>{
+        const date = new Date(l.ts).toLocaleString('de-DE', {day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit'});
+        const diffCls = l.diff < 0 ? 'pos' : (l.diff > 0 ? 'neg' : 'zero');
+        const diffLabel = l.diff < 0 ? `−${Math.abs(l.diff)}` : (l.diff > 0 ? `+${l.diff}` : '0');
+        logTbody.appendChild(el(`
+          <tr>
+            <td class="mono" style="font-size:12px; color:var(--muted);">${date}</td>
+            <td>${escapeHtml(l.productName)} (${escapeHtml(l.gebindeName)})</td>
+            <td class="num mono">${l.expected}</td>
+            <td class="num mono">${l.actual}</td>
+            <td class="num balance ${diffCls}">${diffLabel}</td>
+            <td style="font-size:12.5px; color:var(--muted);">${escapeHtml(l.note||'')}</td>
+          </tr>
+        `));
+      });
+      logCard.appendChild(logTable);
+    }
+    wrap.appendChild(logCard);
+
+    return wrap;
+  }
+
+  function openRestockModal(item){
+    const p = state.products.find(pp=>pp.id===item.productId);
+    const backdrop = el(`
+      <div class="modal-backdrop">
+        <div class="modal">
+          <h3>Wareneingang erfassen</h3>
+          <div style="font-size:13px; color:var(--muted); margin-bottom:10px;">
+            ${p ? escapeHtml(p.name) : 'Produkt'} · ${escapeHtml(item.gebindeName)} (${item.unitsPerGebinde}er) ·
+            aktueller Bestand: ${item.stockUnits}
+          </div>
+          <div class="field">
+            <label>Anzahl eingekaufter Gebinde</label>
+            <input type="number" id="restockCount" min="1" step="1" placeholder="z. B. 5" />
+          </div>
+          <div id="restockError" style="color:var(--danger); font-size:12.5px; min-height:16px;"></div>
+          <div class="modal-actions">
+            <button class="btn ghost" id="restockCancel">Abbrechen</button>
+            <button class="btn" id="restockConfirm">Speichern</button>
+          </div>
+        </div>
+      </div>
+    `);
+    document.body.appendChild(backdrop);
+    backdrop.querySelector('#restockCancel').addEventListener('click', ()=>backdrop.remove());
+    backdrop.addEventListener('click', (e)=>{ if(e.target===backdrop) backdrop.remove(); });
+    backdrop.querySelector('#restockConfirm').addEventListener('click', async ()=>{
+      const count = parseInt(backdrop.querySelector('#restockCount').value, 10);
+      const err = backdrop.querySelector('#restockError');
+      if(!count || count<1){ err.textContent = 'Bitte eine gültige Anzahl angeben.'; return; }
+      item.stockUnits += count * item.unitsPerGebinde;
+      const ok = await saveInventory();
+      if(!ok){ err.textContent = 'Speichern fehlgeschlagen.'; return; }
+      backdrop.remove();
+      toast('Wareneingang erfasst: +' + (count * item.unitsPerGebinde) + ' Einheiten');
+      render();
+    });
+  }
+
+  function openStockCorrectionModal(item){
+    const p = state.products.find(pp=>pp.id===item.productId);
+    const backdrop = el(`
+      <div class="modal-backdrop">
+        <div class="modal">
+          <h3>Bestand korrigieren</h3>
+          <div style="font-size:13px; color:var(--muted); margin-bottom:10px;">
+            ${p ? escapeHtml(p.name) : 'Produkt'} · ${escapeHtml(item.gebindeName)} - z. B. nach einer
+            Inventur oder bei Schwund/Bruch. Aktuell erwarteter Bestand
+            (laut gebuchten Verkäufen): <strong>${item.stockUnits}</strong>.
+          </div>
+          <div class="field">
+            <label>Tatsächlich gezählter Bestand (Einzeleinheiten)</label>
+            <input type="number" id="correctStock" min="0" step="1" value="${item.stockUnits}" />
+          </div>
+          <div class="field">
+            <label>Nachbestellen ab (Einzeleinheiten)</label>
+            <input type="number" id="correctThreshold" min="0" step="1" value="${item.reorderThresholdUnits}" />
+          </div>
+          <div class="field">
+            <label>Notiz (optional)</label>
+            <input type="text" id="correctNote" placeholder="z. B. Inventur nach Vereinsfest" />
+          </div>
+          <div id="correctError" style="color:var(--danger); font-size:12.5px; min-height:16px;"></div>
+          <div class="modal-actions">
+            <button class="btn ghost" id="correctCancel">Abbrechen</button>
+            <button class="btn" id="correctConfirm">Speichern</button>
+          </div>
+        </div>
+      </div>
+    `);
+    document.body.appendChild(backdrop);
+    backdrop.querySelector('#correctCancel').addEventListener('click', ()=>backdrop.remove());
+    backdrop.addEventListener('click', (e)=>{ if(e.target===backdrop) backdrop.remove(); });
+    backdrop.querySelector('#correctConfirm').addEventListener('click', async ()=>{
+      const newStock = parseInt(backdrop.querySelector('#correctStock').value, 10);
+      const newThreshold = parseInt(backdrop.querySelector('#correctThreshold').value, 10);
+      const note = backdrop.querySelector('#correctNote').value.trim();
+      const err = backdrop.querySelector('#correctError');
+      if(isNaN(newStock) || newStock<0){ err.textContent = 'Bitte einen gültigen Bestand angeben.'; return; }
+      const expected = item.stockUnits;
+      const diff = newStock - expected;
+      item.stockUnits = newStock;
+      item.reorderThresholdUnits = isNaN(newThreshold) ? item.reorderThresholdUnits : newThreshold;
+      const ok = await saveInventory();
+      if(!ok){ err.textContent = 'Speichern fehlgeschlagen.'; return; }
+      if(diff !== 0){
+        state.inventoryLog.push({
+          id: uid(), itemId: item.id,
+          productName: p ? p.name : 'Gelöschtes Produkt',
+          gebindeName: item.gebindeName,
+          ts: Date.now(),
+          expected, actual: newStock, diff, note,
+        });
+        await saveInventoryLog();
+      }
+      backdrop.remove();
+      if(diff < 0){
+        toast('Bestand aktualisiert – ' + Math.abs(diff) + ' Einheiten weniger als erwartet');
+      } else if(diff > 0){
+        toast('Bestand aktualisiert – ' + diff + ' Einheiten mehr als erwartet');
+      } else {
+        toast('Bestand bestätigt – keine Abweichung');
+      }
+      render();
+    });
+  }
+
+  // Zieht bei einer Bestellung automatisch die verkauften Mengen vom
+  // Lagerbestand ab, sofern für das jeweilige Produkt ein Gebinde angelegt ist.
+  async function deductInventoryForOrder(items){
+    if(!state.settings.modules.materialwirtschaft) return;
+    let changed = false;
+    for(const orderItem of items){
+      const inv = state.inventory.find(i => i.productId === orderItem.productId && i.active !== false);
+      if(inv){
+        inv.stockUnits -= orderItem.qty;
+        changed = true;
+      }
+    }
+    if(changed) await saveInventory();
+  }
+
   // ---------- MODULE (nur Ersteller) ----------
   // Zentrale Übersicht, um einzelne Funktionen der App global ein- oder
   // auszuschalten. Neue Funktionen bekommen hier künftig einfach einen
@@ -1898,6 +2214,11 @@
       key: 'fullscreenButton',
       title: 'Vollbildmodus-Button',
       description: 'Das ⛶-Symbol im Header zum Umschalten in den Browser-Vollbildmodus.',
+    },
+    {
+      key: 'materialwirtschaft',
+      title: 'Materialwirtschaft',
+      description: 'Eigener Bereich „Material" für Admin/Ersteller: Gebinde je Produkt anlegen, Wareneingang erfassen, Lagerbestand einsehen und Nachbestell-Hinweis, sobald der Bestand die Schwelle unterschreitet.',
     },
   ];
 

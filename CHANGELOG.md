@@ -358,6 +358,35 @@ per Bar/Überweisung/SEPA abgerechnet.
   Bereiche der App geklickt; Theke-PIN-Login sieht den Modul-Bereich
   nachweislich nicht.
 
+## v1.21.0 – Materialwirtschaft (neues Modul)
+- **Neuer Bereich „Material"** für Admin/Ersteller: Gebinde je Produkt anlegen
+  (z. B. „Kasten" mit 20 Flaschen), Start-Lagerbestand erfassen und eine
+  Nachbestellschwelle festlegen.
+- **Automatischer Abzug bei Verkauf**: Jede Bestellung an der Theke reduziert
+  den Lagerbestand des verknüpften Produkts automatisch um die verkaufte
+  Menge - ganz ohne manuellen Zusatzschritt.
+- **Wareneingang erfassen**: Anzahl eingekaufter Gebinde eintragen, der
+  Bestand wird automatisch in Einzeleinheiten umgerechnet und hochgezählt.
+- **Bestandskorrektur**: manuelle Anpassung für Inventuren, Bruch oder Schwund.
+- **Differenz-/Schwundkontrolle**: Jede Bestandskorrektur mit Abweichung wird
+  protokolliert (Datum, Produkt, erwarteter vs. gezählter Bestand, Differenz,
+  optionale Notiz). Zeigt konkret, ob weniger vorhanden war als laut
+  gebuchten Verkäufen erwartet - also ob nicht alles gebucht wurde, was
+  entnommen wurde. Inklusive kumulierter Gesamtsumme und geschätztem
+  Gegenwert in Euro (fehlende Einheiten × Produktpreis).
+- **Nachbestell-Hinweis**: Positionen unter der Schwelle werden rot als
+  „Nachbestellen!" markiert; zusätzlich zeigt der „Material"-Tab in der
+  Navigation ein kleines Zahlen-Badge mit der Anzahl betroffener Positionen.
+- Als eigenes, abschaltbares Modul umgesetzt (Schalter in der
+  Modulverwaltung, Standard: aktiviert) - lässt sich bei Bedarf über
+  „Module" ausblenden.
+- Mit einem vollständigen End-to-End-Test (jsdom) verifiziert: Gebinde
+  anlegen → echten Verkauf über die Theke-Oberfläche buchen → korrekter
+  automatischer Abzug → Wareneingang → manuelle Korrektur mit Differenz
+  (60 → 50, Protokoll-Eintrag „−10", geschätzter Gegenwert korrekt berechnet)
+  → Nachbestell-Status und Tab-Badge in beiden Fällen (OK/Nachbestellen)
+  korrekt.
+
 ---
 
 ## Architektur-Überblick (Stand heute)
