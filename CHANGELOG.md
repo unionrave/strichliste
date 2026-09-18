@@ -316,6 +316,20 @@ per Bar/Überweisung/SEPA abgerechnet.
 - Mit echten Testdaten verifiziert, inklusive kombiniertem Mitglieds- und
   Zeitraumfilter.
 
+## v1.19.5 – Regression behoben: Verlauf blieb nach Buchung veraltet stehen
+- **Ursache**: Die "nicht endlos wiederholen"-Bremse aus v1.19.3 hat beim
+  Invalidieren nach einer neuen Buchung nur eine von zwei internen Sperren
+  zurückgesetzt. Dadurch hielt sich der Verlauf **innerhalb derselben
+  Sitzung** fälschlich für aktuell und zeigte neue Buchungen erst nach einem
+  kompletten Neuladen der Seite an - genau das war v1.19.3 eigentlich
+  gedacht zu verhindern, hat es hier aber selbst ausgelöst.
+- Beide Sperren werden nach einer Buchung/Zahlung jetzt korrekt
+  zurückgesetzt, der Verlauf lädt sich beim nächsten Öffnen wieder wie
+  vorgesehen automatisch neu.
+- Mit einer gezielten Zustands-Simulation verifiziert (alter Code
+  reproduzierbar fehlerhaft, neuer Code korrekt in allen drei Schritten:
+  laden → buchen → erneut laden).
+
 ---
 
 ## Architektur-Überblick (Stand heute)

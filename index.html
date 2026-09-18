@@ -384,7 +384,7 @@
   "use strict";
 
   // Bei jedem neuen Release hier aktualisieren (erscheint automatisch im Footer).
-  const APP_VERSION = 'v1.19.4';
+  const APP_VERSION = 'v1.19.5';
   document.getElementById('appFooter').textContent =
     'Erstellt von Marco Weber für SG Germania Binsfeld Tennis · ' + APP_VERSION;
 
@@ -521,7 +521,8 @@
     if(!r.ok) return false;
     const delta = tx.type === 'order' ? tx.total : -tx.amount;
     state.balances[tx.memberId] = (state.balances[tx.memberId] || 0) + delta;
-    state.verlaufData.filterKey = null; // Verlauf beim nächsten Aufruf neu laden
+    state.verlaufData.filterKey = null;
+    state.verlaufData.attemptedKey = null; // beide Sperren zurücksetzen, sonst hält sich der Verlauf innerhalb der Sitzung fälschlich für aktuell
     return true;
   }
 
