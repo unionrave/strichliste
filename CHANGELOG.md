@@ -330,6 +330,34 @@ per Bar/Überweisung/SEPA abgerechnet.
   reproduzierbar fehlerhaft, neuer Code korrekt in allen drei Schritten:
   laden → buchen → erneut laden).
 
+## v1.19.6 – Summenanzeige im Verlauf nur für Admin/Ersteller
+- Die drei Summenkarten (Bestellungen, Zahlungen, Korrekturen) über der
+  Verlaufsliste sind jetzt nur sichtbar, wenn mit Admin- oder Ersteller-PIN
+  angemeldet - mit reinem Theke-PIN bleiben sie ausgeblendet.
+
+## v1.20.0 – Modulverwaltung (nur Ersteller)
+- **Neuer Bereich „Module"**, sichtbar und bedienbar ausschließlich mit dem
+  Ersteller-PIN - erscheint nicht einmal in der Navigation für Admin- oder
+  Theke-PIN-Nutzer. Dafür wird jetzt intern unterschieden, ob mit Admin- oder
+  mit Ersteller-PIN angemeldet wurde (bisher gab es dafür keinen eigenen
+  Status).
+- Fünf Funktionen lassen sich dort global ein- oder ausschalten, wirkt sich
+  sofort auf alle Nutzer:innen aus:
+  - **Barcode-/Kamera-Anmeldung** (Theke, Sperrbildschirm, Mitglieder-Barcode)
+  - **Korrekturbuchungen** (negative Beträge im Zahlungsdialog)
+  - **Verlauf-Filter**
+  - **Summenanzeige im Verlauf**
+  - **Vollbildmodus-Button**
+- Bestehende Installationen bekommen die fehlende Modul-Konfiguration beim
+  ersten Laden automatisch mit Standardwerten (alles aktiviert) ergänzt -
+  keine manuelle Nacharbeit nötig.
+- Als Grundlage für künftige Funktionen gedacht: neue Features bekommen hier
+  künftig einfach einen weiteren Schalter dazu.
+- Mit einem echten Rendering-Test (jsdom) verifiziert: alle Module über die
+  Benutzeroberfläche einzeln deaktiviert, anschließend fehlerfrei durch alle
+  Bereiche der App geklickt; Theke-PIN-Login sieht den Modul-Bereich
+  nachweislich nicht.
+
 ---
 
 ## Architektur-Überblick (Stand heute)
@@ -346,7 +374,7 @@ per Bar/Überweisung/SEPA abgerechnet.
 
 1. **Theke-PIN** – Zugang zur App allgemein (Bestellungen buchen, Verlauf ansehen)
 2. **Admin-PIN** – zusätzlich: Übersicht/Zahlungen, Mitglieder, Produkte verwalten
-3. **Ersteller-PIN** – ausschließlich: kompletten Buchungsverlauf löschen
+3. **Ersteller-PIN** – zusätzlich: kompletten Buchungsverlauf löschen, Modulverwaltung
 
 PIN-Prüfung läuft seit v1.18.3 ausschließlich serverseitig (`api.php`); die
 PIN-Werte selbst verlassen die Datenbank nie in Richtung Browser.

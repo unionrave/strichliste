@@ -384,7 +384,7 @@
   "use strict";
 
   // Bei jedem neuen Release hier aktualisieren (erscheint automatisch im Footer).
-  const APP_VERSION = 'v1.19.5';
+  const APP_VERSION = 'v1.20.0';
   document.getElementById('appFooter').textContent =
     'Erstellt von Marco Weber für SG Germania Binsfeld Tennis · ' + APP_VERSION;
 
@@ -394,7 +394,20 @@
 
   let state = {
     loaded: false,
-    settings: { clubName: 'SG Germania Binsfeld Tennis', requireBarcodeForBookings: false },
+    settings: {
+      clubName: 'SG Germania Binsfeld Tennis',
+      requireBarcodeForBookings: false,
+      // Modulverwaltung: einzelne Funktionen lassen sich hierüber global
+      // ein-/ausschalten. Neue Funktionen bekommen hier künftig einen
+      // eigenen Schalter dazu - nur für den Ersteller sichtbar/bedienbar.
+      modules: {
+        barcodeScanning: true,
+        negativePayments: true,
+        verlaufFilter: true,
+        verlaufSummary: true,
+        fullscreenButton: true,
+      },
+    },
     members: [],
     products: [],
     // Salden je Mitglied (memberId -> Zahl), kommen fertig aggregiert vom
@@ -413,6 +426,7 @@
     verifiedPin: null,
     thekeUnlocked: false,
     adminUnlocked: false,
+    ownerUnlocked: false,
     view: 'theke',
     selectedMember: null,
     cart: {}, // productId -> qty
@@ -435,7 +449,16 @@
       const [s, m, p, authStatus, balancesRes] = await Promise.all([
         safeGet('settings'), safeGet('members'), safeGet('products'), fetchAuthStatus(), apiAction({ action:'get_balances' })
       ]);
-      if (s) state.settings = JSON.parse(s.value);
+      if (s) {
+        const loadedSettings = JSON.parse(s.value);
+        // Bestehende Installationen hatten "modules" noch nicht - fehlende
+        // Schalter mit den Standardwerten auffüllen, statt sie zu verlieren.
+        state.settings = {
+          ...state.settings,
+          ...loadedSettings,
+          modules: { ...state.settings.modules, ...(loadedSettings.modules || {}) },
+        };
+      }
       if (m) state.members = JSON.parse(m.value);
       // Migration: ältere Mitgliederdatensätze hatten nur ein "name"-Feld statt
       // getrennter Vor-/Nachnamen - einmalig aufsplitten, letztes Wort = Nachname.
@@ -684,7 +707,7 @@
           <div style="font-size:13px; color:var(--muted); margin-bottom:14px;">🔒 Bitte Theke-PIN eingeben</div>
           <div style="display:flex; gap:8px;">
             <input type="password" id="lockPin" inputmode="numeric" placeholder="PIN" style="flex:1; min-width:0; text-align:center; font-size:18px; letter-spacing:0.1em;" />
-            <button class="scan-btn" id="lockScanBtn" title="PIN per Kamera scannen">📷</button>
+            ${state.settings.modules.barcodeScanning ? '<button class="scan-btn" id="lockScanBtn" title="PIN per Kamera scannen">📷</button>' : ''}
           </div>
           <div id="lockError" style="color:var(--danger); font-size:12.5px; min-height:16px; margin-top:6px;"></div>
           <button class="btn accent" id="lockBtn" style="width:100%; margin-top:10px;">Entsperren</button>
@@ -702,7 +725,9 @@
       lockBtn.disabled = false;
       if(level === 'admin' || level === 'owner'){
         state.verifiedPin = pin;
-        state.thekeUnlocked = true; state.adminUnlocked = true; render(); return;
+        state.thekeUnlocked = true; state.adminUnlocked = true;
+        state.ownerUnlocked = (level === 'owner');
+        render(); return;
       }
       if(level === 'theke'){
         state.thekeUnlocked = true; render(); return;
@@ -711,7 +736,7 @@
       input.value=''; input.focus();
     };
     wrap.querySelector('#lockBtn').addEventListener('click', doUnlock);
-    wrap.querySelector('#lockScanBtn').addEventListener('click', ()=>{
+    wrap.querySelector('#lockScanBtn')?.addEventListener('click', ()=>{
       openBarcodeScanner((code)=>{ input.value = code; doUnlock(); });
     });
     input.addEventListener('keydown', e=>{ if(e.key==='Enter') doUnlock(); });
@@ -751,6 +776,7 @@
       confirmBtn.disabled = false;
       if(level === 'admin' || level === 'owner'){
         state.adminUnlocked = true;
+        state.ownerUnlocked = state.ownerUnlocked || (level === 'owner');
         state.verifiedPin = pin;
         backdrop.remove();
         onUnlocked();
@@ -775,7 +801,7 @@
           <div class="brand-name">
             <span class="main">${escapeHtml(brandMain)}</span><span class="accent">${escapeHtml(brandAccent)}</span>
           </div>
-          <button class="btn ghost" id="fullscreenBtn" style="color:var(--chalk); border-color:rgba(247,245,239,0.4); flex:0 0 auto;" title="Vollbildmodus">⛶</button>
+          ${state.settings.modules.fullscreenButton ? '<button class="btn ghost" id="fullscreenBtn" style="color:var(--chalk); border-color:rgba(247,245,239,0.4); flex:0 0 auto;" title="Vollbildmodus">⛶</button>' : ''}
           <button class="btn ghost" id="logoutBtn" style="color:var(--chalk); border-color:rgba(247,245,239,0.4); flex:0 0 auto;">Abmelden</button>
         </div>
         <div class="subtitle">Digitale Strichliste · Bestellen, buchen, abrechnen</div>
@@ -785,18 +811,20 @@
           ${tabBtn('mitglieder','Mitglieder')}
           ${tabBtn('produkte','Produkte')}
           ${tabBtn('verlauf','Verlauf')}
+          ${state.ownerUnlocked ? tabBtn('module','Module') : ''}
         </nav>
       </header>
     `);
     header.querySelector('#logoutBtn').addEventListener('click', ()=>{
       state.thekeUnlocked = false;
       state.adminUnlocked = false;
+      state.ownerUnlocked = false;
       state.verifiedPin = null;
       state.view = 'theke';
       render();
     });
     const fsBtn = header.querySelector('#fullscreenBtn');
-    fsBtn.addEventListener('click', ()=>{
+    fsBtn?.addEventListener('click', ()=>{
       if(!document.fullscreenElement){
         document.documentElement.requestFullscreen?.().catch(()=>{});
       } else {
@@ -828,6 +856,7 @@
       case 'mitglieder': return renderMitglieder();
       case 'produkte': return renderProdukte();
       case 'verlauf': return renderVerlauf();
+      case 'module': return state.ownerUnlocked ? renderModule() : renderTheke();
       default: return document.createElement('div');
     }
   }
@@ -851,16 +880,18 @@
     const search = el(`<input class="search-input" type="text" placeholder="Mitglied suchen …" style="flex:1; margin-bottom:0;" />`);
     search.value = state.memberSearch;
     search.addEventListener('input', ()=>{ state.memberSearch = search.value; renderMemberGrid(grid); });
-    const scanBtn = el(`<button class="scan-btn" title="Mitglied per Barcode auswählen">📷</button>`);
-    scanBtn.addEventListener('click', ()=>{
-      openBarcodeScanner((code)=>{
-        const match = state.members.find(m => m.active !== false && m.barcode && m.barcode === code);
-        if(match){ openOrderOverlay(match); }
-        else { toast('Kein aktives Mitglied mit diesem Barcode gefunden.'); }
-      });
-    });
     searchRow.appendChild(search);
-    searchRow.appendChild(scanBtn);
+    if(state.settings.modules.barcodeScanning){
+      const scanBtn = el(`<button class="scan-btn" title="Mitglied per Barcode auswählen">📷</button>`);
+      scanBtn.addEventListener('click', ()=>{
+        openBarcodeScanner((code)=>{
+          const match = state.members.find(m => m.active !== false && m.barcode && m.barcode === code);
+          if(match){ openOrderOverlay(match); }
+          else { toast('Kein aktives Mitglied mit diesem Barcode gefunden.'); }
+        });
+      });
+      searchRow.appendChild(scanBtn);
+    }
     card.appendChild(searchRow);
     const grid = el(`<div class="member-grid"></div>`);
     card.appendChild(grid);
@@ -1149,6 +1180,7 @@
   }
 
   function openPaymentModal(member){
+    const allowNegative = state.settings.modules.negativePayments;
     const backdrop = el(`
       <div class="modal-backdrop">
         <div class="modal">
@@ -1158,20 +1190,21 @@
           </div>
           <div class="field">
             <label>Betrag (€)</label>
-            <input type="number" id="payAmount" step="0.01" placeholder="z. B. 10,00 oder -10,00" />
+            <input type="number" id="payAmount" step="0.01" ${allowNegative ? '' : 'min="0"'} placeholder="${allowNegative ? 'z. B. 10,00 oder -10,00' : 'z. B. 10,00'}" />
           </div>
+          ${allowNegative ? `
           <div style="font-size:12px; color:var(--muted); margin:-8px 0 4px;">
             Positiver Betrag = normale Zahlung (senkt den Saldo, größere Beträge als der
             offene Saldo bilden ein Guthaben ab). Negativer Betrag = Korrektur/Rückbuchung
             (erhöht den Saldo bzw. baut ein Guthaben wieder ab).
-          </div>
+          </div>` : ''}
           <div class="field">
             <label>Zahlweise</label>
             <select id="payMethod">
               <option value="bar">Bar</option>
               <option value="ueberweisung">Überweisung</option>
               <option value="sepa">SEPA-Lastschrift</option>
-              <option value="korrektur">Korrektur</option>
+              ${allowNegative ? '<option value="korrektur">Korrektur</option>' : ''}
             </select>
           </div>
           <div class="field">
@@ -1191,6 +1224,7 @@
     backdrop.querySelector('#payConfirm').addEventListener('click', async ()=>{
       const amt = parseFloat(backdrop.querySelector('#payAmount').value);
       if(isNaN(amt) || amt===0){ toast('Bitte einen gültigen Betrag ungleich 0 angeben.'); return; }
+      if(!allowNegative && amt<0){ toast('Negative Beträge sind deaktiviert.'); return; }
       const method = backdrop.querySelector('#payMethod').value;
       const note = backdrop.querySelector('#payNote').value.trim();
       const tx = { id: uid(), type:'payment', memberId: member.id, amount: amt, method, note, ts: Date.now() };
@@ -1221,7 +1255,7 @@
             <label>Barcode (optional, für Anmeldung per Kamera)</label>
             <div style="display:flex; gap:8px;">
               <input type="text" id="editMemberBarcode" value="${escapeHtml(m.barcode||'')}" style="flex:1;" />
-              <button type="button" class="scan-btn" id="editMemberScan" title="Barcode scannen">📷</button>
+              ${state.settings.modules.barcodeScanning ? '<button type="button" class="scan-btn" id="editMemberScan" title="Barcode scannen">📷</button>' : ''}
             </div>
           </div>
           <div id="editMemberError" style="color:var(--danger); font-size:12.5px; min-height:16px;"></div>
@@ -1236,7 +1270,7 @@
     const firstInput = backdrop.querySelector('#editMemberFirst');
     const lastInput = backdrop.querySelector('#editMemberLast');
     const barcodeInput = backdrop.querySelector('#editMemberBarcode');
-    backdrop.querySelector('#editMemberScan').addEventListener('click', ()=>{
+    backdrop.querySelector('#editMemberScan')?.addEventListener('click', ()=>{
       openBarcodeScanner((code)=>{ barcodeInput.value = code; });
     });
     backdrop.querySelector('#editMemberCancel').addEventListener('click', ()=>backdrop.remove());
@@ -1272,7 +1306,7 @@
         <input type="text" id="newMemberFirst" placeholder="Vorname" style="flex:1; min-width:130px;" />
         <input type="text" id="newMemberLast" placeholder="Nachname" style="flex:1; min-width:130px;" />
         <input type="text" id="newMemberBarcode" placeholder="Barcode (optional)" style="flex:1; min-width:150px;" />
-        <button type="button" class="scan-btn" id="newMemberScan" title="Barcode scannen">📷</button>
+        ${state.settings.modules.barcodeScanning ? '<button type="button" class="scan-btn" id="newMemberScan" title="Barcode scannen">📷</button>' : ''}
         <button class="btn" id="addMemberBtn">Hinzufügen</button>
       </div>
     `);
@@ -1281,7 +1315,7 @@
     const firstInput = form.querySelector('#newMemberFirst');
     const lastInput = form.querySelector('#newMemberLast');
     const barcodeInput = form.querySelector('#newMemberBarcode');
-    form.querySelector('#newMemberScan').addEventListener('click', ()=>{
+    form.querySelector('#newMemberScan')?.addEventListener('click', ()=>{
       openBarcodeScanner((code)=>{ barcodeInput.value = code; });
     });
     const doAdd = async ()=>{
@@ -1596,6 +1630,7 @@
         if(level !== 'owner'){
           err.textContent = 'Falscher PIN.'; input.value=''; input.focus(); return;
         }
+        state.ownerUnlocked = true;
         backdrop.remove();
         onSuccess(pin);
       } else {
@@ -1609,6 +1644,7 @@
           return;
         }
         state.authStatus.hasOwnerPin = true;
+        state.ownerUnlocked = true;
         backdrop.remove();
         toast('Ersteller-PIN festgelegt');
         onSuccess(pin);
@@ -1702,56 +1738,60 @@
     }
 
     // ---- Filterleiste ----
-    const membersForFilter = state.members.slice().sort((a,b)=> fullName(a).localeCompare(fullName(b)));
-    const filterCard = el(`
-      <div class="card">
-        <div class="row" style="align-items:flex-end;">
-          <div class="field" style="flex:1; min-width:170px; margin-bottom:0;">
-            <label>Mitglied</label>
-            <select id="filterMember">
-              <option value="">Alle Mitglieder</option>
-              ${membersForFilter.map(m=>`<option value="${m.id}" ${f.memberId===m.id?'selected':''}>${escapeHtml(fullName(m))}</option>`).join('')}
-            </select>
+    if(state.settings.modules.verlaufFilter){
+      const membersForFilter = state.members.slice().sort((a,b)=> fullName(a).localeCompare(fullName(b)));
+      const filterCard = el(`
+        <div class="card">
+          <div class="row" style="align-items:flex-end;">
+            <div class="field" style="flex:1; min-width:170px; margin-bottom:0;">
+              <label>Mitglied</label>
+              <select id="filterMember">
+                <option value="">Alle Mitglieder</option>
+                ${membersForFilter.map(m=>`<option value="${m.id}" ${f.memberId===m.id?'selected':''}>${escapeHtml(fullName(m))}</option>`).join('')}
+              </select>
+            </div>
+            <div class="field" style="flex:1; min-width:150px; margin-bottom:0;">
+              <label>Art</label>
+              <select id="filterType">
+                <option value="" ${f.type===''?'selected':''}>Alle</option>
+                <option value="order" ${f.type==='order'?'selected':''}>Bestellungen</option>
+                <option value="payment" ${f.type==='payment'?'selected':''}>Zahlungen</option>
+                <option value="korrektur" ${f.type==='korrektur'?'selected':''}>Korrekturen</option>
+              </select>
+            </div>
+            <div class="field" style="flex:1; min-width:140px; margin-bottom:0;">
+              <label>Von</label>
+              <input type="date" id="filterFrom" value="${f.from}" />
+            </div>
+            <div class="field" style="flex:1; min-width:140px; margin-bottom:0;">
+              <label>Bis</label>
+              <input type="date" id="filterTo" value="${f.to}" />
+            </div>
+            <button class="btn ghost" id="filterReset" style="flex:0 0 auto;">Zurücksetzen</button>
           </div>
-          <div class="field" style="flex:1; min-width:150px; margin-bottom:0;">
-            <label>Art</label>
-            <select id="filterType">
-              <option value="" ${f.type===''?'selected':''}>Alle</option>
-              <option value="order" ${f.type==='order'?'selected':''}>Bestellungen</option>
-              <option value="payment" ${f.type==='payment'?'selected':''}>Zahlungen</option>
-              <option value="korrektur" ${f.type==='korrektur'?'selected':''}>Korrekturen</option>
-            </select>
-          </div>
-          <div class="field" style="flex:1; min-width:140px; margin-bottom:0;">
-            <label>Von</label>
-            <input type="date" id="filterFrom" value="${f.from}" />
-          </div>
-          <div class="field" style="flex:1; min-width:140px; margin-bottom:0;">
-            <label>Bis</label>
-            <input type="date" id="filterTo" value="${f.to}" />
-          </div>
-          <button class="btn ghost" id="filterReset" style="flex:0 0 auto;">Zurücksetzen</button>
         </div>
-      </div>
-    `);
-    filterCard.querySelector('#filterMember').addEventListener('change', e=>{ f.memberId = e.target.value; render(); });
-    filterCard.querySelector('#filterType').addEventListener('change', e=>{ f.type = e.target.value; render(); });
-    filterCard.querySelector('#filterFrom').addEventListener('change', e=>{ f.from = e.target.value; render(); });
-    filterCard.querySelector('#filterTo').addEventListener('change', e=>{ f.to = e.target.value; render(); });
-    filterCard.querySelector('#filterReset').addEventListener('click', ()=>{
-      state.verlaufFilter = { memberId:'', type:'', from:'', to:'' };
-      render();
-    });
-    wrap.appendChild(filterCard);
+      `);
+      filterCard.querySelector('#filterMember').addEventListener('change', e=>{ f.memberId = e.target.value; render(); });
+      filterCard.querySelector('#filterType').addEventListener('change', e=>{ f.type = e.target.value; render(); });
+      filterCard.querySelector('#filterFrom').addEventListener('change', e=>{ f.from = e.target.value; render(); });
+      filterCard.querySelector('#filterTo').addEventListener('change', e=>{ f.to = e.target.value; render(); });
+      filterCard.querySelector('#filterReset').addEventListener('click', ()=>{
+        state.verlaufFilter = { memberId:'', type:'', from:'', to:'' };
+        render();
+      });
+      wrap.appendChild(filterCard);
+    }
 
-    const s = d.summary;
-    wrap.appendChild(el(`
-      <div class="summary-cards">
-        <div class="card"><div class="big mono">${fmt(s.orderSum)}</div><div class="lbl">Bestellungen (Umsatz)</div></div>
-        <div class="card"><div class="big mono">${fmt(s.paymentSum)}</div><div class="lbl">Zahlungen erhalten</div></div>
-        <div class="card"><div class="big mono">${fmt(s.correctionSum)}</div><div class="lbl">Korrekturen</div></div>
-      </div>
-    `));
+    if(state.adminUnlocked && state.settings.modules.verlaufSummary){
+      const s = d.summary;
+      wrap.appendChild(el(`
+        <div class="summary-cards">
+          <div class="card"><div class="big mono">${fmt(s.orderSum)}</div><div class="lbl">Bestellungen (Umsatz)</div></div>
+          <div class="card"><div class="big mono">${fmt(s.paymentSum)}</div><div class="lbl">Zahlungen erhalten</div></div>
+          <div class="card"><div class="big mono">${fmt(s.correctionSum)}</div><div class="lbl">Korrekturen</div></div>
+        </div>
+      `));
+    }
 
     if(d.items.length===0){
       const currentKey = JSON.stringify(f);
@@ -1826,6 +1866,81 @@
     }
 
     wrap.appendChild(card);
+    return wrap;
+  }
+
+  // ---------- MODULE (nur Ersteller) ----------
+  // Zentrale Übersicht, um einzelne Funktionen der App global ein- oder
+  // auszuschalten. Neue Funktionen bekommen hier künftig einfach einen
+  // weiteren Eintrag dazu.
+  const MODULE_DEFS = [
+    {
+      key: 'barcodeScanning',
+      title: 'Barcode-/Kamera-Anmeldung',
+      description: 'Mitgliedsauswahl an der Theke, PIN-Eingabe am Sperrbildschirm und Barcode-Zuordnung bei Mitgliedern per Kamera-Scan. Deaktiviert blendet alle Kamera-Symbole aus.',
+    },
+    {
+      key: 'negativePayments',
+      title: 'Korrekturbuchungen',
+      description: 'Erlaubt negative Beträge im Zahlungsdialog, um bereits erfasste Zahlungen oder Guthaben zu korrigieren. Deaktiviert sind dort nur noch positive Zahlungen möglich.',
+    },
+    {
+      key: 'verlaufFilter',
+      title: 'Verlauf-Filter',
+      description: 'Filterleiste (Mitglied, Art, Zeitraum) oberhalb des Buchungsverlaufs.',
+    },
+    {
+      key: 'verlaufSummary',
+      title: 'Summenanzeige im Verlauf',
+      description: 'Zeigt Bestellungen-, Zahlungs- und Korrektursummen passend zum Filter. Ist ohnehin nur für Admin/Ersteller sichtbar; dieser Schalter blendet sie auch für diese ganz aus.',
+    },
+    {
+      key: 'fullscreenButton',
+      title: 'Vollbildmodus-Button',
+      description: 'Das ⛶-Symbol im Header zum Umschalten in den Browser-Vollbildmodus.',
+    },
+  ];
+
+  function renderModule(){
+    const wrap = document.createElement('div');
+    wrap.appendChild(el(`
+      <div class="card">
+        <div class="section-title">Module</div>
+        <div style="font-size:13px; color:var(--muted); margin-bottom:4px;">
+          Einzelne Funktionen der App global ein- oder ausschalten. Nur für dich als
+          Ersteller sichtbar und bedienbar - Änderungen wirken sich sofort auf alle
+          Nutzer:innen der App aus.
+        </div>
+      </div>
+    `));
+
+    const listCard = el(`<div class="card"></div>`);
+    MODULE_DEFS.forEach(mod=>{
+      const enabled = state.settings.modules[mod.key] !== false;
+      const row = el(`
+        <div style="display:flex; align-items:flex-start; gap:14px; padding:14px 0; border-bottom:1px solid var(--line);">
+          <label style="flex:0 0 auto; margin-top:2px;">
+            <input type="checkbox" data-mod="${mod.key}" ${enabled?'checked':''} style="width:22px; height:22px; cursor:pointer;" />
+          </label>
+          <div style="flex:1;">
+            <div style="font-weight:600; font-size:15px;">${escapeHtml(mod.title)}</div>
+            <div style="font-size:12.5px; color:var(--muted); margin-top:3px;">${escapeHtml(mod.description)}</div>
+          </div>
+        </div>
+      `);
+      row.querySelector('input').addEventListener('change', async (e)=>{
+        state.settings.modules[mod.key] = e.target.checked;
+        const ok = await saveSettings();
+        if(ok) toast((mod.title) + (e.target.checked ? ' aktiviert' : ' deaktiviert'));
+        render();
+      });
+      listCard.appendChild(row);
+    });
+    // Letzte Trennlinie entfernen
+    const lastRow = listCard.lastElementChild;
+    if(lastRow) lastRow.style.borderBottom = 'none';
+
+    wrap.appendChild(listCard);
     return wrap;
   }
 
