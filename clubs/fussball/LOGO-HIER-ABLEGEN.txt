@@ -1,0 +1,3 @@
+Vereinslogo als "logo.png" (PNG, am besten mit transparentem Hintergrund,
+ca. 300-600 px breit) in diesen Ordner legen. Bis dahin läuft die App ohne Logo.
+Nach dem Ablegen genügt ein Neuladen der Seite - kein Neustart nötig.

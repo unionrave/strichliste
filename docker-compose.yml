@@ -1,9 +1,11 @@
-version: "3.8"
-
+# Ein Stack pro Verein. Start (im Repo-Ordner):
+#   docker compose -p tresen-<verein> --env-file clubs/<verein>/.env up -d --build
+# Alle vereinsspezifischen Werte (Port, Datenordner, DB-Passwörter) stehen in
+# clubs/<verein>/.env, Name/Farben/Logo in clubs/<verein>/branding.json + logo.png.
 services:
   db:
     image: mariadb:11
-    container_name: tresen-db
+    container_name: ${COMPOSE_PROJECT_NAME}-db
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
@@ -11,12 +13,11 @@ services:
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     volumes:
-      # Passt den Pfad ggf. an euer Unraid-Share an (appdata ist Standard)
-      - /mnt/user/appdata/tresen/db:/var/lib/mysql
+      - ${DATA_DIR}/db:/var/lib/mysql
 
   web:
     build: ./web
-    container_name: tresen-web
+    container_name: ${COMPOSE_PROJECT_NAME}-web
     restart: unless-stopped
     depends_on:
       - db
@@ -26,17 +27,19 @@ services:
       DB_USER: ${MYSQL_USER}
       DB_PASSWORD: ${MYSQL_PASSWORD}
     ports:
-      # links: Port auf dem Unraid-Host, rechts: Port im Container (nicht ändern)
-      - "8090:80"
+      # links: Port auf dem Unraid-Host (je Verein verschieden), rechts: Container-Port
+      - "${WEB_PORT}:80"
     volumes:
-      - ./app:/var/www/html
+      - ./index.html:/var/www/html/index.html:ro
+      - ./api.php:/var/www/html/api.php:ro
+      - ./config.php:/var/www/html/config.php:ro
+      # Vereinsspezifisch: branding.json + logo.png
+      - ./clubs/${CLUB}:/var/www/html/branding:ro
 
-  # Erstellt täglich automatisch einen komprimierten Datenbank-Dump und
-  # entfernt Backups, die älter als 30 Tage sind. Läuft dauerhaft im
-  # Hintergrund, kein Cron auf dem Host nötig.
+  # Täglicher komprimierter Datenbank-Dump, Backups älter als 30 Tage werden entfernt.
   db-backup:
     image: mariadb:11
-    container_name: tresen-db-backup
+    container_name: ${COMPOSE_PROJECT_NAME}-db-backup
     restart: unless-stopped
     depends_on:
       - db
@@ -45,8 +48,7 @@ services:
       MYSQL_DATABASE: ${MYSQL_DATABASE}
       RETENTION_DAYS: "30"
     volumes:
-      # Eigener Ordner außerhalb des DB-Datenverzeichnisses - bewusst getrennt,
-      # damit ein Problem mit dem DB-Volume nicht auch die Backups betrifft.
-      - /mnt/user/appdata/tresen/backups:/backups
+      # Getrennt vom DB-Datenordner, damit ein DB-Problem nicht auch die Backups trifft.
+      - ${DATA_DIR}/backups:/backups
       - ./backup.sh:/backup.sh:ro
     entrypoint: ["sh", "/backup.sh"]

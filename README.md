@@ -1,6 +1,6 @@
-# Vereinstresen – SG Germania Binsfeld Tennis
+# Vereinstresen – SG Germania Binsfeld (Tennis & Fußball)
 
-Digitale Strichliste für den Tennis-Vereinstresen (inspiriert von tinyTresen).
+Digitale Strichliste für den Vereinstresen (je Verein eine eigene Instanz) (inspiriert von tinyTresen).
 Mitglieder bestellen an der Theke, alles wird auf ihr Konto gebucht, und später
 per Bar/Überweisung/SEPA abgerechnet – ohne Papierliste.
 
@@ -31,7 +31,8 @@ Die vollständige Entstehungsgeschichte und alle Änderungen stehen in
 ## Aufbau
 
 ```
-index.html          Die komplette App (UI + Logik) als einzelne Datei
+index.html          Die komplette App (UI + Logik) als einzelne Datei – für alle Vereine gleich
+clubs/<verein>/      Vereinsspezifisch: branding.json, logo.png, .env(.example)
 api.php              Backend: einfacher Key-Value-Speicher über MySQL/MariaDB
 config.php            Datenbank-Zugangsdaten
 docker-compose.yml    Betrieb als drei Container (App + MariaDB + Backup), z. B. auf Unraid
@@ -39,7 +40,7 @@ web/Dockerfile        PHP/Apache-Image mit pdo_mysql-Erweiterung + Gzip
 web/deflate.conf       Apache-Konfiguration für Gzip-Kompression (Docker)
 .htaccess             Gzip-Kompression für Strato/XAMPP (ohne Docker)
 backup.sh             Tägliches automatisches Datenbank-Backup (Docker)
-.env                  Zugangsdaten für den Docker-Compose-Stack
+clubs/<verein>/.env   Zugangsdaten/Port/Datenordner je Verein (nicht im Git)
 ```
 
 ## Betrieb – drei Wege
@@ -57,17 +58,44 @@ phpMyAdmin anlegen, Dateien (inkl. `.htaccess`) nach `htdocs/tresen/`
 kopieren, `config.php` anpassen (`host: localhost`, `user: root`,
 `password: ''`).
 
-### 3. Unraid (Docker Compose)
-`docker-compose.yml`, `web/Dockerfile`, `web/deflate.conf` und die
-App-Dateien wie im Repo strukturiert ablegen, `.env` mit echten Passwörtern
-befüllen, per Docker Compose Manager (oder `docker compose up -d`) starten.
-Gzip-Kompression ist hier bereits im Dockerfile aktiviert.
+### 3. Unraid (Docker Compose) – ein Stack pro Verein
+Repo auf den Server legen (z. B. `/mnt/user/appdata/tresen-repo`), dann je Verein:
+```bash
+cp clubs/tennis/.env.example clubs/tennis/.env     # Passwörter eintragen
+docker compose -p tresen --env-file clubs/tennis/.env up -d --build
+
+cp clubs/fussball/.env.example clubs/fussball/.env # andere Passwörter!
+docker compose -p tresen-fussball --env-file clubs/fussball/.env up -d --build
+```
+Jeder Verein bekommt eigene Container, eigene Datenbank, eigene PINs, einen
+eigenen Port (`WEB_PORT`, Tennis 8090 / Fußball 8091) und einen eigenen
+Datenordner mit Backups. Gzip ist im Dockerfile bereits aktiviert.
+
+## Neuen Verein hinzufügen
+1. `clubs/tennis/` nach `clubs/<neuer-verein>/` kopieren.
+2. In `branding.json` `clubName` (und ggf. Farben) anpassen, `logo.png` ersetzen
+   (fehlt das Logo, läuft die App ohne).
+3. `.env.example` → `.env` kopieren und anpassen: `CLUB=<neuer-verein>`,
+   `COMPOSE_PROJECT_NAME`, **eigener `WEB_PORT`**, eigener `DATA_DIR`, neue
+   Passwörter und eigener `MYSQL_DATABASE`-Name.
+4. Starten: `docker compose -p <projektname> --env-file clubs/<neuer-verein>/.env up -d --build`
+5. Im Nginx Proxy Manager einen Proxy Host auf `<Unraid-IP>:<WEB_PORT>` anlegen
+   (eigene Subdomain je Verein). Beim ersten Aufruf die PINs einrichten.
+
+Logo oder Farben später ändern: Datei im Vereinsordner austauschen und die
+Seite neu laden – kein Neustart nötig. Bei Strato/XAMPP wird der Vereinsordner
+als `branding/` neben `index.html` hochgelegt.
+
+**Umstieg bestehender Tennis-Installation:** Container-Namen und Datenpfade
+bleiben gleich; `clubs/tennis/.env` aus der bisherigen `.env` übernehmen und
+`CLUB=tennis`, `COMPOSE_PROJECT_NAME=tresen`, `WEB_PORT=8090`,
+`DATA_DIR=/mnt/user/appdata/tresen` ergänzen. Den Stack zuvor stoppen.
 
 ## Backups
 
 Nur im Docker-Betrieb (Unraid): ein dritter Container (`db-backup`) erstellt
 automatisch einmal täglich einen komprimierten Datenbank-Dump und legt ihn
-unter `/mnt/user/appdata/tresen/backups` ab. Ältere Backups als 30 Tage
+unter `<DATA_DIR>/backups` ab (Tennis: `/mnt/user/appdata/tresen/backups`). Ältere Backups als 30 Tage
 werden automatisch gelöscht (einstellbar über `RETENTION_DAYS` in
 `docker-compose.yml`).
 
@@ -100,4 +128,4 @@ Verwaltung fernzuhalten, aber kein Ersatz für echte Benutzerkonten.
 
 ---
 
-Erstellt von Marco Weber für SG Germania Binsfeld Tennis.
+Erstellt von Marco Weber für SG Germania Binsfeld.

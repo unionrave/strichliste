@@ -1,6 +1,6 @@
-# Changelog – Vereinstresen (SG Germania Binsfeld Tennis)
+# Changelog – Vereinstresen (SG Germania Binsfeld)
 
-Digitale Strichliste für den Tennis-Vereinstresen, angelehnt an tinyTresen.
+Digitale Strichliste für den Vereinstresen (Tennis und Fußball), angelehnt an tinyTresen.
 Mitglieder bestellen an der Theke, alles wird auf ihr Konto gebucht, und später
 per Bar/Überweisung/SEPA abgerechnet.
 
@@ -407,3 +407,23 @@ per Bar/Überweisung/SEPA abgerechnet.
 
 PIN-Prüfung läuft seit v1.18.3 ausschließlich serverseitig (`api.php`); die
 PIN-Werte selbst verlassen die Datenbank nie in Richtung Browser.
+
+## v1.22.0 – Mehrere Vereine aus einem Repo (Tennis + Fußball)
+- **Branding aus Konfiguration statt aus dem Code**: Vereinsname, Farben und
+  Logo stehen nicht mehr fest in `index.html`, sondern in
+  `clubs/<verein>/branding.json` und `clubs/<verein>/logo.png`. `index.html`
+  ist damit für alle Vereine identisch.
+- Neuer Verein **SG Germania Binsfeld Fußball** (`clubs/fussball/`), Farben
+  identisch zum Tennisverein. Ohne `logo.png` läuft die App sauber ohne Logo
+  (Header-Badge, Sperrbildschirm, Hintergrund-Wasserzeichen entfallen).
+- Titel, Theme-Color, Footer und Web-App-Manifest werden zur Laufzeit aus dem
+  Branding erzeugt. Der Vereinsname kommt immer aus `branding.json` (ein evtl.
+  in der Datenbank gespeicherter alter Name wird überschrieben).
+- `docker-compose.yml` ist parametrisiert (Projektname, Port, Datenordner,
+  Branding-Ordner über `clubs/<verein>/.env`): pro Verein ein eigener Stack mit
+  eigener Datenbank, eigenen PINs, eigenem Port und eigenem Backup-Ordner.
+  Die App-Dateien werden jetzt einzeln aus dem Repo eingehängt (kein `app/`-
+  Unterordner mehr nötig).
+- Der Tennis-Stack behält seine Container-Namen (`tresen-db`, `tresen-web`,
+  `tresen-db-backup`) und Datenpfade (`/mnt/user/appdata/tresen`).
+- Neue README-Anleitung "Neuen Verein hinzufügen".
