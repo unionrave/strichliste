@@ -427,3 +427,13 @@ PIN-Werte selbst verlassen die Datenbank nie in Richtung Browser.
 - Der Tennis-Stack behält seine Container-Namen (`tresen-db`, `tresen-web`,
   `tresen-db-backup`) und Datenpfade (`/mnt/user/appdata/tresen`).
 - Neue README-Anleitung "Neuen Verein hinzufügen".
+
+## v1.23.0 – Mitglieder-Reihenfolge speichern
+- Im Tab **Mitglieder** lässt sich die aktuelle Reihenfolge mit
+  „💾 Reihenfolge speichern“ merken. Nach dem Umsortieren (▲▼, Vorname/
+  Nachname A–Z) bringt „↩ Gespeicherte Reihenfolge“ die Liste wieder in
+  genau diesen Zustand zurück.
+- Neu angelegte Mitglieder erscheinen danach am Ende, gelöschte werden
+  übersprungen. Es gibt eine gespeicherte Reihenfolge pro Verein; erneutes
+  Speichern ersetzt sie (nach Rückfrage).
+
