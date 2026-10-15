@@ -437,3 +437,8 @@ PIN-Werte selbst verlassen die Datenbank nie in Richtung Browser.
   übersprungen. Es gibt eine gespeicherte Reihenfolge pro Verein; erneutes
   Speichern ersetzt sie (nach Rückfrage).
 
+## v1.23.1 – Reihenfolge speichern nur für Ersteller
+- „💾 Reihenfolge speichern“ ist jetzt nur mit dem Ersteller-PIN sichtbar und
+  bedienbar. „↩ Gespeicherte Reihenfolge“ steht weiterhin auch dem Admin zur
+  Verfügung.
+

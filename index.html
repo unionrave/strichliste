@@ -383,7 +383,7 @@
   "use strict";
 
   // Bei jedem neuen Release hier aktualisieren (erscheint automatisch im Footer).
-  const APP_VERSION = 'v1.23.0';
+  const APP_VERSION = 'v1.23.1';
   const FOOTER = document.getElementById('appFooter');
   FOOTER.textContent = 'Erstellt von Marco Weber · ' + APP_VERSION;
 
@@ -1424,7 +1424,7 @@
             <div style="display:flex; gap:8px; flex-wrap:wrap;">
               <button class="btn ghost" id="sortMembersFirst" style="padding:6px 12px; font-size:12.5px;">Vorname A–Z</button>
               <button class="btn ghost" id="sortMembersLast" style="padding:6px 12px; font-size:12.5px;">Nachname A–Z</button>
-              <button class="btn ghost" id="saveMemberOrder" style="padding:6px 12px; font-size:12.5px;" title="Aktuelle Reihenfolge merken">💾 Reihenfolge speichern</button>
+              ${state.ownerUnlocked ? '<button class="btn ghost" id="saveMemberOrder" style="padding:6px 12px; font-size:12.5px;" title="Aktuelle Reihenfolge merken (nur Ersteller)">💾 Reihenfolge speichern</button>' : ''}
               ${state.settings.memberOrder ? '<button class="btn ghost" id="restoreMemberOrder" style="padding:6px 12px; font-size:12.5px;" title="Zur gespeicherten Reihenfolge zurückkehren">↩ Gespeicherte Reihenfolge</button>' : ''}
             </div>
           ` : ''}
@@ -1435,6 +1435,7 @@
     const saveOrderBtn = listCard.querySelector('#saveMemberOrder');
     if(saveOrderBtn){
       saveOrderBtn.addEventListener('click', async ()=>{
+        if(!state.ownerUnlocked) return;
         if(state.settings.memberOrder && !confirm('Die bisher gespeicherte Reihenfolge wird durch die aktuelle ersetzt. Fortfahren?')) return;
         state.settings.memberOrder = { ids: state.members.map(m=>m.id), savedAt: Date.now() };
         const ok = await saveSettings();
