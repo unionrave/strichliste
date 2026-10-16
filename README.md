@@ -18,6 +18,9 @@ Die vollständige Entstehungsgeschichte und alle Änderungen stehen in
   setzen, frei sortierbar (▲▼ oder A–Z)
 - **Verlauf** – vollständige Buchungshistorie, inkl. Ersteller-geschütztem
   Zurücksetzen
+- **Benutzergruppen & Rechte** – der Ersteller legt eigene Gruppen mit einzeln
+  vergebbaren Rechten an (Zahlungen, Verwaltung, Summen, Material, Reihenfolge
+  speichern, Module) und ordnet Personen mit persönlichem PIN zu
 - **Dreistufiger PIN-Schutz** – Theke / Admin / Ersteller, wobei der
   Ersteller-PIN zusätzlich alle Admin-Rechte besitzt (siehe Changelog)
 - Responsive & touch-optimiert (u. a. verlässliches 3-Spalten-Layout im

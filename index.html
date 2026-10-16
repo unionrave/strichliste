@@ -383,7 +383,7 @@
   "use strict";
 
   // Bei jedem neuen Release hier aktualisieren (erscheint automatisch im Footer).
-  const APP_VERSION = 'v1.23.1';
+  const APP_VERSION = 'v1.24.0';
   const FOOTER = document.getElementById('appFooter');
   FOOTER.textContent = 'Erstellt von Marco Weber · ' + APP_VERSION;
 
@@ -484,6 +484,11 @@
     // "PINs ändern" als Bestätigung mitgeschickt, damit nicht doppelt nach
     // einem PIN gefragt werden muss. Wird bei "Abmelden" gelöscht.
     verifiedPin: null,
+    ownerPin: null,       // nur im Speicher, für Benutzer-/Gruppenverwaltung
+    perms: new Set(),     // Rechte der angemeldeten Sitzung
+    userName: null,
+    groups: [],           // selbst angelegte Gruppen {id,name,perms[]}
+    users: [], usersLoaded: false, usersLoading: false, groupsDraft: null,
     thekeUnlocked: false,
     adminUnlocked: false,
     ownerUnlocked: false,
@@ -498,8 +503,7 @@
     verlaufData: { filterKey: null, attemptedKey: null, items: [], total: 0, offset: 0, loading: false, summary: { orderSum: 0, paymentSum: 0, correctionSum: 0 } },
   };
 
-  const ADMIN_VIEWS = ['uebersicht','mitglieder','produkte','material'];
-
+  
   async function loadAll(){
     await loadBranding();
     state.settings.clubName = BRAND.clubName;
@@ -508,8 +512,8 @@
       // (Buchungshistorie als ein einzelner JSON-Block) auf die neue Tabelle -
       // no-op, falls schon migriert oder eine neue Installation.
       await apiAction({ action: 'migrate_transactions' });
-      const [s, m, p, inv, invLog, authStatus, balancesRes] = await Promise.all([
-        safeGet('settings'), safeGet('members'), safeGet('products'), safeGet('inventory'), safeGet('inventoryLog'), fetchAuthStatus(), apiAction({ action:'get_balances' })
+      const [s, m, p, inv, invLog, grp, authStatus, balancesRes] = await Promise.all([
+        safeGet('settings'), safeGet('members'), safeGet('products'), safeGet('inventory'), safeGet('inventoryLog'), safeGet('groups'), fetchAuthStatus(), apiAction({ action:'get_balances' })
       ]);
       if (s) {
         const loadedSettings = JSON.parse(s.value);
@@ -538,6 +542,7 @@
       if (p) state.products = JSON.parse(p.value);
       if (inv) state.inventory = JSON.parse(inv.value);
       if (invLog) state.inventoryLog = JSON.parse(invLog.value);
+      if (grp) state.groups = JSON.parse(grp.value);
       if (authStatus) state.authStatus = authStatus;
       if (balancesRes.ok && balancesRes.data) state.balances = balancesRes.data.balances || {};
     } catch(e){ console.error('Ladefehler', e); }
@@ -572,6 +577,49 @@
   async function verifyPin(pin){
     const r = await authAction({ action: 'verify_pin', pin });
     return r.ok && r.data ? r.data.level : null;
+  }
+
+  // Vollständige Sitzung (Stufe, Rechte, Name) zu einem PIN - oder null.
+  async function verifySession(pin){
+    const r = await authAction({ action: 'verify_pin', pin });
+    if(!(r.ok && r.data && r.data.level)) return null;
+    return { level: r.data.level, perms: r.data.perms || [], name: r.data.name || null };
+  }
+
+  // ---- Rechte ----
+  // Feste Gruppen: Theke (nur buchen), Admin, Ersteller (alles). Eigene Gruppen
+  // bekommen vom Ersteller einzelne Rechte. Die Rechte selbst liefert der
+  // Server beim PIN-Login; der Ersteller hat immer alle.
+  const PERM_DEFS = [
+    { key:'payments',  label:'Übersicht & Zahlungen erfassen' },
+    { key:'manage',    label:'Mitglieder & Produkte verwalten' },
+    { key:'history',   label:'Summen im Verlauf sehen' },
+    { key:'material',  label:'Materialwirtschaft nutzen' },
+    { key:'saveOrder', label:'Reihenfolge/Filter speichern' },
+    { key:'modules',   label:'Module aktivieren/deaktivieren' },
+  ];
+  const VIEW_PERM = { uebersicht:'payments', mitglieder:'manage', produkte:'manage', material:'material', module:'modules', benutzer:'__owner' };
+  function can(perm){
+    if(perm === '__owner') return state.ownerUnlocked;
+    return state.ownerUnlocked || state.perms.has(perm);
+  }
+  function canView(view){
+    const p = VIEW_PERM[view];
+    return !p || can(p);
+  }
+  function applySession(sess, pin){
+    state.thekeUnlocked = true;
+    state.perms = new Set(sess.perms);
+    state.userName = sess.name;
+    state.adminUnlocked = (sess.level === 'admin' || sess.level === 'owner');
+    state.ownerUnlocked = (sess.level === 'owner');
+    state.verifiedPin = state.adminUnlocked ? pin : null;
+    state.ownerPin = state.ownerUnlocked ? pin : null;
+  }
+  function clearSession(){
+    state.thekeUnlocked = false; state.adminUnlocked = false; state.ownerUnlocked = false;
+    state.verifiedPin = null; state.ownerPin = null; state.perms = new Set(); state.userName = null;
+    state.usersLoaded = false; state.users = []; state.groupsDraft = null;
   }
 
   async function safeGet(key){
@@ -757,9 +805,7 @@
       const r = await authAction({ action:'set_auth', thekePin: tp, adminPin: ap });
       if(!r.ok){ err.textContent = 'Speichern fehlgeschlagen, bitte erneut versuchen.'; return; }
       state.authStatus = { hasAuth: true, hasOwnerPin: false };
-      state.verifiedPin = ap;
-      state.thekeUnlocked = true;
-      state.adminUnlocked = true;
+      applySession({ level:'admin', perms:['payments','manage','history','material'], name:null }, ap);
       toast('Zugriffsschutz eingerichtet');
       render();
     });
@@ -772,7 +818,7 @@
         <div class="card" style="text-align:center;">
           ${logoImg('height:110px; margin:0 auto 14px;')}
           <div class="section-title" style="text-align:center;">${escapeHtml(state.settings.clubName)}</div>
-          <div style="font-size:13px; color:var(--muted); margin-bottom:14px;">🔒 Bitte Theke-PIN eingeben</div>
+          <div style="font-size:13px; color:var(--muted); margin-bottom:14px;">🔒 Bitte PIN eingeben</div>
           <div style="display:flex; gap:8px;">
             <input type="password" id="lockPin" inputmode="numeric" placeholder="PIN" style="flex:1; min-width:0; text-align:center; font-size:18px; letter-spacing:0.1em;" />
             ${state.settings.modules.barcodeScanning ? '<button class="scan-btn" id="lockScanBtn" title="PIN per Kamera scannen">📷</button>' : ''}
@@ -789,17 +835,9 @@
       const err = wrap.querySelector('#lockError');
       if(!pin) return;
       lockBtn.disabled = true;
-      const level = await verifyPin(pin);
+      const sess = await verifySession(pin);
       lockBtn.disabled = false;
-      if(level === 'admin' || level === 'owner'){
-        state.verifiedPin = pin;
-        state.thekeUnlocked = true; state.adminUnlocked = true;
-        state.ownerUnlocked = (level === 'owner');
-        render(); return;
-      }
-      if(level === 'theke'){
-        state.thekeUnlocked = true; render(); return;
-      }
+      if(sess){ applySession(sess, pin); render(); return; }
       err.textContent = 'Falscher PIN.';
       input.value=''; input.focus();
     };
@@ -812,16 +850,16 @@
     return wrap;
   }
 
-  function openAdminPinModal(onUnlocked){
+  function openAdminPinModal(view, onUnlocked){
     const backdrop = el(`
       <div class="modal-backdrop">
         <div class="modal">
           <h3>🔒 Admin-Bereich</h3>
           <div style="font-size:13px; color:var(--muted); margin-bottom:10px;">
-            Für diesen Bereich ist das Admin-PIN nötig.
+            Für diesen Bereich ist ein PIN mit entsprechender Berechtigung nötig.
           </div>
           <div class="field">
-            <input type="password" id="adminPinInput" inputmode="numeric" placeholder="Admin-PIN" />
+            <input type="password" id="adminPinInput" inputmode="numeric" placeholder="PIN" />
           </div>
           <div id="adminPinError" style="color:var(--danger); font-size:12.5px; min-height:16px;"></div>
           <div class="modal-actions">
@@ -840,18 +878,21 @@
       const pin = input.value.trim();
       if(!pin) return;
       confirmBtn.disabled = true;
-      const level = await verifyPin(pin);
+      const sess = await verifySession(pin);
       confirmBtn.disabled = false;
-      if(level === 'admin' || level === 'owner'){
-        state.adminUnlocked = true;
-        state.ownerUnlocked = state.ownerUnlocked || (level === 'owner');
-        state.verifiedPin = pin;
-        backdrop.remove();
-        onUnlocked();
-      } else {
+      if(!sess){
         backdrop.querySelector('#adminPinError').textContent = 'Falscher PIN.';
-        input.value=''; input.focus();
+        input.value=''; input.focus(); return;
       }
+      const need = VIEW_PERM[view];
+      const has = !need ? true : (need === '__owner' ? sess.level === 'owner' : (sess.level === 'owner' || sess.perms.includes(need)));
+      if(!has){
+        backdrop.querySelector('#adminPinError').textContent = 'Keine Berechtigung für diesen Bereich.';
+        input.value=''; input.focus(); return;
+      }
+      applySession(sess, pin);
+      backdrop.remove();
+      onUnlocked();
     };
     backdrop.querySelector('#adminPinConfirm').addEventListener('click', confirmPin);
     input.addEventListener('keydown', e=>{ if(e.key==='Enter') confirmPin(); });
@@ -880,15 +921,13 @@
           ${tabBtn('produkte','Produkte')}
           ${tabBtn('verlauf','Verlauf')}
           ${state.settings.modules.materialwirtschaft ? tabBtn('material','Material', lowStockCount() || null) : ''}
-          ${state.ownerUnlocked ? tabBtn('module','Module') : ''}
+          ${can('modules') ? tabBtn('module','Module') : ''}
+          ${state.ownerUnlocked ? tabBtn('benutzer','Benutzer') : ''}
         </nav>
       </header>
     `);
     header.querySelector('#logoutBtn').addEventListener('click', ()=>{
-      state.thekeUnlocked = false;
-      state.adminUnlocked = false;
-      state.ownerUnlocked = false;
-      state.verifiedPin = null;
+      clearSession();
       state.view = 'theke';
       render();
     });
@@ -903,8 +942,8 @@
     header.querySelectorAll('nav.tabs button').forEach(b=>{
       b.addEventListener('click', ()=>{
         const targetView = b.dataset.view;
-        if(ADMIN_VIEWS.includes(targetView) && !state.adminUnlocked){
-          openAdminPinModal(()=>{ state.view = targetView; state.selectedMember=null; render(); });
+        if(!canView(targetView)){
+          openAdminPinModal(targetView, ()=>{ state.view = targetView; state.selectedMember=null; render(); });
           return;
         }
         state.view = targetView; state.selectedMember=null; render();
@@ -914,20 +953,22 @@
   }
 
   function tabBtn(view, label, badge){
-    const showLock = ADMIN_VIEWS.includes(view) && !state.adminUnlocked;
+    const showLock = !canView(view);
     const badgeHtml = badge ? `<span style="background:var(--danger); color:#fff; border-radius:999px; font-size:11px; padding:1px 6px; margin-left:5px; font-family:'Inter',sans-serif;">${badge}</span>` : '';
     return `<button data-view="${view}" class="${state.view===view?'active':''}">${showLock?'🔒 ':''}${label}${badgeHtml}</button>`;
   }
 
   function renderView(){
+    if(!canView(state.view)) return renderTheke();
     switch(state.view){
       case 'theke': return renderTheke();
       case 'uebersicht': return renderUebersicht();
       case 'mitglieder': return renderMitglieder();
       case 'produkte': return renderProdukte();
       case 'verlauf': return renderVerlauf();
-      case 'material': return state.settings.modules.materialwirtschaft ? renderMaterial() : renderTheke();
-      case 'module': return state.ownerUnlocked ? renderModule() : renderTheke();
+      case 'material': return (state.settings.modules.materialwirtschaft && can('material')) ? renderMaterial() : renderTheke();
+      case 'module': return can('modules') ? renderModule() : renderTheke();
+      case 'benutzer': return state.ownerUnlocked ? renderBenutzer() : renderTheke();
       default: return document.createElement('div');
     }
   }
@@ -1181,7 +1222,7 @@
         <div style="font-size:13px; color:var(--muted); margin-bottom:10px;">
           Theke-PIN gilt für alle, Admin-PIN schützt Übersicht, Mitglieder und Produkte.
         </div>
-        <button class="btn ghost" id="changePinBtn">PINs ändern</button>
+        ${state.adminUnlocked ? '<button class="btn ghost" id="changePinBtn">PINs ändern</button>' : ''}
         <div style="margin-top:18px; padding-top:16px; border-top:1px solid var(--line);">
           <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
             <input type="checkbox" id="requireBarcodeToggle" ${state.settings.requireBarcodeForBookings?'checked':''} style="width:20px; height:20px; flex:0 0 auto;" />
@@ -1196,7 +1237,7 @@
         </div>
       </div>
     `);
-    secCard.querySelector('#changePinBtn').addEventListener('click', openChangePinModal);
+    secCard.querySelector('#changePinBtn')?.addEventListener('click', openChangePinModal);
     secCard.querySelector('#requireBarcodeToggle').addEventListener('change', async (e)=>{
       state.settings.requireBarcodeForBookings = e.target.checked;
       const ok = await saveSettings();
@@ -1424,7 +1465,7 @@
             <div style="display:flex; gap:8px; flex-wrap:wrap;">
               <button class="btn ghost" id="sortMembersFirst" style="padding:6px 12px; font-size:12.5px;">Vorname A–Z</button>
               <button class="btn ghost" id="sortMembersLast" style="padding:6px 12px; font-size:12.5px;">Nachname A–Z</button>
-              ${state.ownerUnlocked ? '<button class="btn ghost" id="saveMemberOrder" style="padding:6px 12px; font-size:12.5px;" title="Aktuelle Reihenfolge merken (nur Ersteller)">💾 Reihenfolge speichern</button>' : ''}
+              ${can('saveOrder') ? '<button class="btn ghost" id="saveMemberOrder" style="padding:6px 12px; font-size:12.5px;" title="Aktuelle Reihenfolge merken (braucht Recht „Reihenfolge speichern“)">💾 Reihenfolge speichern</button>' : ''}
               ${state.settings.memberOrder ? '<button class="btn ghost" id="restoreMemberOrder" style="padding:6px 12px; font-size:12.5px;" title="Zur gespeicherten Reihenfolge zurückkehren">↩ Gespeicherte Reihenfolge</button>' : ''}
             </div>
           ` : ''}
@@ -1435,7 +1476,7 @@
     const saveOrderBtn = listCard.querySelector('#saveMemberOrder');
     if(saveOrderBtn){
       saveOrderBtn.addEventListener('click', async ()=>{
-        if(!state.ownerUnlocked) return;
+        if(!can('saveOrder')) return;
         if(state.settings.memberOrder && !confirm('Die bisher gespeicherte Reihenfolge wird durch die aktuelle ersetzt. Fortfahren?')) return;
         state.settings.memberOrder = { ids: state.members.map(m=>m.id), savedAt: Date.now() };
         const ok = await saveSettings();
@@ -1737,7 +1778,7 @@
         if(level !== 'owner'){
           err.textContent = 'Falscher PIN.'; input.value=''; input.focus(); return;
         }
-        state.ownerUnlocked = true;
+        state.ownerUnlocked = true; state.ownerPin = pin;
         backdrop.remove();
         onSuccess(pin);
       } else {
@@ -1751,7 +1792,7 @@
           return;
         }
         state.authStatus.hasOwnerPin = true;
-        state.ownerUnlocked = true;
+        state.ownerUnlocked = true; state.ownerPin = pin;
         backdrop.remove();
         toast('Ersteller-PIN festgelegt');
         onSuccess(pin);
@@ -1889,7 +1930,7 @@
       wrap.appendChild(filterCard);
     }
 
-    if(state.adminUnlocked && state.settings.modules.verlaufSummary){
+    if(can('history') && state.settings.modules.verlaufSummary){
       const s = d.summary;
       wrap.appendChild(el(`
         <div class="summary-cards">
@@ -2269,7 +2310,216 @@
     if(changed) await saveInventory();
   }
 
-  // ---------- MODULE (nur Ersteller) ----------
+
+  // ---------- BENUTZER & GRUPPEN (nur Ersteller) ----------
+  const FIXED_GROUPS = [
+    { name:'Theke', desc:'Gemeinsamer Theke-PIN. Darf nur Bestellungen buchen.', perms:[] },
+    { name:'Admin', desc:'Gemeinsamer Admin-PIN.', perms:['payments','manage','history','material'] },
+    { name:'Ersteller', desc:'Ersteller-PIN. Hat immer alle Rechte, verwaltet Gruppen und Benutzer.', perms:PERM_DEFS.map(p=>p.key) },
+  ];
+  const permLabel = (k)=> (PERM_DEFS.find(p=>p.key===k)||{}).label || k;
+
+  async function loadUsers(){
+    state.usersLoading = true;
+    const r = await authAction({ action:'list_users', confirmPin: state.ownerPin || '' });
+    state.usersLoading = false;
+    if(r.ok && r.data){ state.users = r.data.users || []; state.usersLoaded = true; }
+    else toast('Benutzer konnten nicht geladen werden.');
+    if(state.view === 'benutzer') render();
+  }
+
+  function userError(r){
+    const e = r.data && r.data.error;
+    return ({
+      unauthorized:'Ersteller-PIN wurde nicht akzeptiert - bitte ab- und neu anmelden.',
+      pin_in_use:'Dieser PIN ist schon vergeben - bitte einen anderen wählen.',
+      pin_too_short:'Der PIN braucht mindestens 4 Zeichen.',
+      pin_required:'Bitte einen PIN vergeben.',
+      invalid_user:'Bitte einen Namen eingeben.',
+      invalid_group:'Bitte eine Gruppe wählen.',
+      group_in_use:'Eine Gruppe mit zugeordneten Benutzern kann nicht gelöscht werden.',
+      invalid_groups:'Gruppen ungültig (Name fehlt oder doppelt).',
+    })[e] || 'Speichern fehlgeschlagen.';
+  }
+
+  function renderBenutzer(){
+    const wrap = document.createElement('div');
+    if(!state.usersLoaded && !state.usersLoading) loadUsers();
+    if(!state.groupsDraft) state.groupsDraft = JSON.parse(JSON.stringify(state.groups));
+    const draft = state.groupsDraft;
+
+    wrap.appendChild(el(`
+      <div class="card">
+        <div class="section-title">Gruppen &amp; Rechte</div>
+        <div style="font-size:13px; color:var(--muted);">
+          Theke, Admin und Ersteller sind feste Gruppen mit ihrem gemeinsamen PIN.
+          Eigene Gruppen bekommen einzelne Rechte; ihre Mitglieder melden sich mit einem
+          <b>persönlichen PIN</b> an (siehe unten). Nur für den Ersteller sichtbar.
+        </div>
+      </div>
+    `));
+
+    // Feste Gruppen (nur Anzeige)
+    const fixedCard = el(`<div class="card"><div style="font-weight:600; margin-bottom:8px;">Feste Gruppen</div></div>`);
+    FIXED_GROUPS.forEach(g=>{
+      fixedCard.appendChild(el(`
+        <div style="padding:8px 0; border-top:1px solid var(--line);">
+          <div style="font-weight:600;">${escapeHtml(g.name)}</div>
+          <div style="font-size:12.5px; color:var(--muted);">${escapeHtml(g.desc)}</div>
+          <div style="font-size:12.5px; margin-top:3px;">${g.perms.length ? g.perms.map(k=>escapeHtml(permLabel(k))).join(' · ') : 'nur Buchen an der Theke'}</div>
+        </div>
+      `));
+    });
+    wrap.appendChild(fixedCard);
+
+    // Eigene Gruppen (bearbeitbar)
+    const grpCard = el(`<div class="card"><div style="font-weight:600; margin-bottom:8px;">Eigene Gruppen</div></div>`);
+    if(draft.length === 0) grpCard.appendChild(el(`<div class="empty">Noch keine eigene Gruppe angelegt.</div>`));
+    draft.forEach((g, gi)=>{
+      const row = el(`
+        <div style="padding:12px 0; border-top:1px solid var(--line);">
+          <div style="display:flex; gap:8px; align-items:center;">
+            <input type="text" data-gname value="${escapeHtml(g.name)}" placeholder="Gruppenname" style="flex:1; min-width:0;" />
+            <button class="icon-btn" data-gdel title="Gruppe entfernen">✕</button>
+          </div>
+          <div style="display:grid; gap:6px; margin-top:8px;">
+            ${PERM_DEFS.map(p=>`
+              <label style="display:flex; align-items:center; gap:10px; font-size:14px; cursor:pointer;">
+                <input type="checkbox" data-perm="${p.key}" ${g.perms.includes(p.key)?'checked':''} style="width:20px; height:20px; flex:0 0 auto;" />
+                <span>${escapeHtml(p.label)}</span>
+              </label>`).join('')}
+          </div>
+        </div>
+      `);
+      row.querySelector('[data-gname]').addEventListener('input', e=>{ g.name = e.target.value; });
+      row.querySelectorAll('[data-perm]').forEach(cb=>cb.addEventListener('change', ()=>{
+        const k = cb.dataset.perm;
+        g.perms = g.perms.filter(x=>x!==k);
+        if(cb.checked) g.perms.push(k);
+      }));
+      row.querySelector('[data-gdel]').addEventListener('click', ()=>{
+        if(state.users.some(u=>u.groupId===g.id)){ toast('Gruppe hat noch Benutzer - erst diese verschieben oder löschen.'); return; }
+        draft.splice(gi,1); render();
+      });
+      grpCard.appendChild(row);
+    });
+    const grpActions = el(`
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">
+        <button class="btn ghost" id="addGroup">+ Gruppe hinzufügen</button>
+        <button class="btn" id="saveGroups">Gruppen speichern</button>
+      </div>
+    `);
+    grpActions.querySelector('#addGroup').addEventListener('click', ()=>{
+      draft.push({ id: uid(), name:'', perms:[] }); render();
+    });
+    grpActions.querySelector('#saveGroups').addEventListener('click', async ()=>{
+      const r = await authAction({ action:'save_groups', confirmPin: state.ownerPin || '', groups: draft });
+      if(!r.ok){ toast(userError(r)); return; }
+      state.groups = JSON.parse(JSON.stringify(draft));
+      toast('Gruppen gespeichert'); render();
+    });
+    grpCard.appendChild(grpActions);
+    wrap.appendChild(grpCard);
+
+    // Benutzer
+    const userCard = el(`<div class="card"><div style="font-weight:600; margin-bottom:4px;">Benutzer</div>
+      <div style="font-size:12.5px; color:var(--muted); margin-bottom:10px;">Jede Person bekommt einen eigenen PIN (mindestens 4 Zeichen, nirgends sonst vergeben).</div></div>`);
+    if(state.groups.length === 0){
+      userCard.appendChild(el(`<div class="empty">Zuerst oben eine Gruppe anlegen und speichern.</div>`));
+    } else {
+      const addRow = el(`<div>
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr auto; gap:8px; align-items:end; margin-bottom:12px;">
+          <div class="field" style="margin:0;"><label>Name</label><input type="text" id="newUserName" /></div>
+          <div class="field" style="margin:0;"><label>Gruppe</label>
+            <select id="newUserGroup">${state.groups.map(g=>`<option value="${escapeHtml(g.id)}">${escapeHtml(g.name)}</option>`).join('')}</select></div>
+          <div class="field" style="margin:0;"><label>PIN</label><input type="text" id="newUserPin" inputmode="numeric" /></div>
+          <button class="btn accent" id="addUserBtn">Anlegen</button>
+        </div>
+        <div id="newUserError" style="color:var(--danger); font-size:12.5px; min-height:16px; margin-bottom:6px;"></div>
+      </div>`);
+      userCard.appendChild(addRow);
+      const errEl = userCard.querySelector('#newUserError');
+      userCard.querySelector('#addUserBtn').addEventListener('click', async ()=>{
+        const name = userCard.querySelector('#newUserName').value.trim();
+        const groupId = userCard.querySelector('#newUserGroup').value;
+        const pin = userCard.querySelector('#newUserPin').value.trim();
+        const r = await authAction({ action:'save_user', confirmPin: state.ownerPin || '', user:{ name, groupId, pin } });
+        if(!r.ok){ errEl.textContent = userError(r); return; }
+        toast('Benutzer angelegt'); await loadUsers();
+      });
+    }
+    if(state.usersLoading && !state.usersLoaded){
+      userCard.appendChild(el(`<div class="empty">Lade Benutzer …</div>`));
+    } else if(state.users.length === 0){
+      if(state.groups.length) userCard.appendChild(el(`<div class="empty">Noch keine Benutzer angelegt.</div>`));
+    } else {
+      const table = el(`<table><thead><tr><th>Name</th><th>Gruppe</th><th>Status</th><th></th></tr></thead><tbody></tbody></table>`);
+      const tbody = table.querySelector('tbody');
+      state.users.forEach(u=>{
+        const g = state.groups.find(x=>x.id===u.groupId);
+        const tr = el(`
+          <tr>
+            <td>${escapeHtml(u.name)}</td>
+            <td>${escapeHtml(g ? g.name : '?')}</td>
+            <td>${u.active===false ? 'inaktiv' : 'aktiv'}</td>
+            <td style="text-align:right; white-space:nowrap;">
+              <button class="icon-btn" data-act="edit" title="Bearbeiten / neuen PIN vergeben">✎</button>
+              <button class="icon-btn" data-act="del" title="Löschen">✕</button>
+            </td>
+          </tr>
+        `);
+        tr.querySelector('[data-act="edit"]').addEventListener('click', ()=> openEditUserModal(u));
+        tr.querySelector('[data-act="del"]').addEventListener('click', async ()=>{
+          if(!confirm('Benutzer „'+u.name+'“ wirklich löschen?')) return;
+          const r = await authAction({ action:'delete_user', confirmPin: state.ownerPin || '', id: u.id });
+          if(!r.ok){ toast(userError(r)); return; }
+          await loadUsers();
+        });
+        tbody.appendChild(tr);
+      });
+      userCard.appendChild(table);
+    }
+    wrap.appendChild(userCard);
+    return wrap;
+  }
+
+  function openEditUserModal(u){
+    const backdrop = el(`
+      <div class="modal-backdrop">
+        <div class="modal">
+          <h3>Benutzer bearbeiten</h3>
+          <div class="field"><label>Name</label><input type="text" id="euName" value="${escapeHtml(u.name)}" /></div>
+          <div class="field"><label>Gruppe</label>
+            <select id="euGroup">${state.groups.map(g=>`<option value="${escapeHtml(g.id)}" ${g.id===u.groupId?'selected':''}>${escapeHtml(g.name)}</option>`).join('')}</select></div>
+          <div class="field"><label>Neuer PIN (leer = unverändert)</label><input type="text" id="euPin" inputmode="numeric" /></div>
+          <label style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+            <input type="checkbox" id="euActive" ${u.active===false?'':'checked'} style="width:20px; height:20px;" /> aktiv (kann sich anmelden)
+          </label>
+          <div id="euError" style="color:var(--danger); font-size:12.5px; min-height:16px;"></div>
+          <div class="modal-actions">
+            <button class="btn ghost" id="euCancel">Abbrechen</button>
+            <button class="btn" id="euSave">Speichern</button>
+          </div>
+        </div>
+      </div>
+    `);
+    document.body.appendChild(backdrop);
+    backdrop.querySelector('#euCancel').addEventListener('click', ()=>backdrop.remove());
+    backdrop.addEventListener('click', (e)=>{ if(e.target===backdrop) backdrop.remove(); });
+    backdrop.querySelector('#euSave').addEventListener('click', async ()=>{
+      const r = await authAction({ action:'save_user', confirmPin: state.ownerPin || '', user:{
+        id: u.id,
+        name: backdrop.querySelector('#euName').value.trim(),
+        groupId: backdrop.querySelector('#euGroup').value,
+        pin: backdrop.querySelector('#euPin').value.trim(),
+        active: backdrop.querySelector('#euActive').checked,
+      }});
+      if(!r.ok){ backdrop.querySelector('#euError').textContent = userError(r); return; }
+      backdrop.remove(); toast('Benutzer gespeichert'); await loadUsers();
+    });
+  }
+
+  // ---------- MODULE ----------
   // Zentrale Übersicht, um einzelne Funktionen der App global ein- oder
   // auszuschalten. Neue Funktionen bekommen hier künftig einfach einen
   // weiteren Eintrag dazu.

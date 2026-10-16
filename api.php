@@ -15,6 +15,13 @@ header('Content-Type: application/json; charset=utf-8');
 
 $config = require __DIR__ . '/config.php';
 const AUTH_KEY = 'auth';
+// Persönliche Benutzer (mit PIN) - wie "auth" nie direkt les-/schreibbar.
+const USERS_KEY = 'users';
+// Benutzergruppen mit Rechten - lesbar, aber nur über save_groups änderbar.
+const GROUPS_KEY = 'groups';
+// Einzeln vergebbare Rechte. Theke/Admin/Ersteller sind feste Gruppen.
+const PERMISSIONS = ['payments', 'manage', 'history', 'material', 'saveOrder', 'modules'];
+
 
 try {
     $pdo = new PDO(
@@ -75,6 +82,54 @@ function get_auth($pdo) {
 }
 function pin_matches($stored, $given) {
     return !empty($stored) && $given !== '' && hash_equals((string)$stored, (string)$given);
+}
+
+function builtin_perms($level) {
+    switch ($level) {
+        case 'owner': return PERMISSIONS;
+        case 'admin': return ['payments', 'manage', 'history', 'material'];
+        default: return [];
+    }
+}
+function get_users($pdo) {
+    $raw = kv_get($pdo, USERS_KEY);
+    $list = $raw ? json_decode($raw, true) : [];
+    return is_array($list) ? $list : [];
+}
+function get_groups($pdo) {
+    $raw = kv_get($pdo, GROUPS_KEY);
+    $list = $raw ? json_decode($raw, true) : [];
+    return is_array($list) ? $list : [];
+}
+function clean_perms($perms) {
+    return array_values(array_intersect(PERMISSIONS, is_array($perms) ? $perms : []));
+}
+// Alle Aktionen zur Benutzer-/Gruppenverwaltung verlangen den Ersteller-PIN.
+function require_owner($pdo, $input) {
+    $confirmPin = isset($input['confirmPin']) ? (string)$input['confirmPin'] : '';
+    $auth = get_auth($pdo);
+    if (!$auth || !pin_matches($auth['ownerPin'] ?? null, $confirmPin)) {
+        http_response_code(403);
+        echo json_encode(['error' => 'unauthorized']);
+        exit;
+    }
+}
+// Ist dieser PIN schon vergeben (Theke/Admin/Ersteller oder anderer Benutzer)?
+function pin_in_use($pdo, $pin, $exceptUserId = null) {
+    $auth = get_auth($pdo) ?: [];
+    foreach (['thekePin', 'adminPin', 'ownerPin'] as $f) {
+        if (pin_matches($auth[$f] ?? null, $pin)) return true;
+    }
+    foreach (get_users($pdo) as $u) {
+        if ($exceptUserId !== null && ($u['id'] ?? null) === $exceptUserId) continue;
+        if (pin_matches($u['pin'] ?? null, $pin)) return true;
+    }
+    return false;
+}
+function fail($code, $error) {
+    http_response_code($code);
+    echo json_encode(['error' => $error]);
+    exit;
 }
 function tx_row_to_array($row) {
     return [
@@ -140,7 +195,7 @@ if ($method === 'GET') {
         echo json_encode(['error' => 'missing_key']);
         exit;
     }
-    if ($key === AUTH_KEY) {
+    if ($key === AUTH_KEY || $key === USERS_KEY) {
         // PINs dürfen nie direkt gelesen werden - nur über die Aktionen unten.
         http_response_code(403);
         echo json_encode(['error' => 'forbidden']);
@@ -183,6 +238,8 @@ if ($method === 'POST') {
         $pin = isset($input['pin']) ? (string)$input['pin'] : '';
         $auth = get_auth($pdo);
         $level = null;
+        $name = null;
+        $perms = [];
         if ($auth) {
             if (pin_matches($auth['ownerPin'] ?? null, $pin)) {
                 $level = 'owner';
@@ -191,8 +248,98 @@ if ($method === 'POST') {
             } elseif (pin_matches($auth['thekePin'] ?? null, $pin)) {
                 $level = 'theke';
             }
+            if ($level !== null) $perms = builtin_perms($level);
         }
-        echo json_encode(['level' => $level]);
+        // Persönliche Benutzer (Gruppen mit frei vergebenen Rechten).
+        if ($level === null && $pin !== '') {
+            $groups = [];
+            foreach (get_groups($pdo) as $g) $groups[$g['id'] ?? ''] = $g;
+            foreach (get_users($pdo) as $u) {
+                if (($u['active'] ?? true) === false) continue;
+                if (pin_matches($u['pin'] ?? null, $pin) && isset($groups[$u['groupId'] ?? ''])) {
+                    $level = 'custom';
+                    $name = $u['name'] ?? null;
+                    $perms = clean_perms($groups[$u['groupId']]['perms'] ?? []);
+                    break;
+                }
+            }
+        }
+        echo json_encode(['level' => $level, 'perms' => $perms, 'name' => $name]);
+        exit;
+    }
+
+    // ---- Benutzergruppen & persönliche Benutzer (nur Ersteller) ----
+    if ($action === 'list_users') {
+        require_owner($pdo, $input);
+        $out = [];
+        foreach (get_users($pdo) as $u) {
+            $out[] = ['id' => $u['id'], 'name' => $u['name'], 'groupId' => $u['groupId'],
+                      'active' => ($u['active'] ?? true) !== false];
+        }
+        echo json_encode(['users' => $out]);
+        exit;
+    }
+    if ($action === 'save_groups') {
+        require_owner($pdo, $input);
+        $in = isset($input['groups']) && is_array($input['groups']) ? $input['groups'] : null;
+        if ($in === null) fail(400, 'invalid_groups');
+        $clean = [];
+        $ids = [];
+        foreach ($in as $g) {
+            $id = isset($g['id']) ? (string)$g['id'] : '';
+            $name = trim(isset($g['name']) ? (string)$g['name'] : '');
+            if ($id === '' || $name === '' || mb_strlen($name) > 40 || isset($ids[$id])) fail(400, 'invalid_groups');
+            $ids[$id] = true;
+            $clean[] = ['id' => $id, 'name' => $name, 'perms' => clean_perms($g['perms'] ?? [])];
+        }
+        foreach (get_users($pdo) as $u) {
+            if (!isset($ids[$u['groupId'] ?? ''])) fail(409, 'group_in_use');
+        }
+        kv_set($pdo, GROUPS_KEY, json_encode($clean));
+        echo json_encode(['ok' => true]);
+        exit;
+    }
+    if ($action === 'save_user') {
+        require_owner($pdo, $input);
+        $u = isset($input['user']) && is_array($input['user']) ? $input['user'] : null;
+        if ($u === null) fail(400, 'invalid_user');
+        $name = trim(isset($u['name']) ? (string)$u['name'] : '');
+        $groupId = isset($u['groupId']) ? (string)$u['groupId'] : '';
+        $pin = isset($u['pin']) ? trim((string)$u['pin']) : '';
+        $id = isset($u['id']) && $u['id'] !== '' ? (string)$u['id'] : null;
+        if ($name === '' || mb_strlen($name) > 60) fail(400, 'invalid_user');
+        $groupOk = false;
+        foreach (get_groups($pdo) as $g) if (($g['id'] ?? '') === $groupId) $groupOk = true;
+        if (!$groupOk) fail(400, 'invalid_group');
+        $users = get_users($pdo);
+        $idx = null;
+        foreach ($users as $i => $x) if ($id !== null && ($x['id'] ?? null) === $id) $idx = $i;
+        if ($id !== null && $idx === null) fail(404, 'not_found');
+        if ($idx === null && $pin === '') fail(400, 'pin_required');
+        if ($pin !== '') {
+            if (mb_strlen($pin) < 4) fail(400, 'pin_too_short');
+            if (pin_in_use($pdo, $pin, $id)) fail(409, 'pin_in_use');
+        }
+        if ($idx === null) {
+            $id = bin2hex(random_bytes(6));
+            $users[] = ['id' => $id, 'name' => $name, 'groupId' => $groupId, 'pin' => $pin,
+                        'active' => ($u['active'] ?? true) !== false];
+        } else {
+            $users[$idx]['name'] = $name;
+            $users[$idx]['groupId'] = $groupId;
+            $users[$idx]['active'] = ($u['active'] ?? true) !== false;
+            if ($pin !== '') $users[$idx]['pin'] = $pin;
+        }
+        kv_set($pdo, USERS_KEY, json_encode(array_values($users)));
+        echo json_encode(['ok' => true, 'id' => $id]);
+        exit;
+    }
+    if ($action === 'delete_user') {
+        require_owner($pdo, $input);
+        $id = isset($input['id']) ? (string)$input['id'] : '';
+        $users = array_values(array_filter(get_users($pdo), function ($x) use ($id) { return ($x['id'] ?? '') !== $id; }));
+        kv_set($pdo, USERS_KEY, json_encode($users));
+        echo json_encode(['ok' => true]);
         exit;
     }
 
@@ -248,6 +395,19 @@ if ($method === 'POST') {
             http_response_code(400);
             echo json_encode(['error' => 'invalid_setup']);
             exit;
+        }
+
+        // Neue/geänderte feste PINs dürfen keinem persönlichen Benutzer-PIN gleichen.
+        foreach (['thekePin', 'adminPin', 'ownerPin'] as $field) {
+            if (!empty($input[$field])) {
+                foreach (get_users($pdo) as $u) {
+                    if (pin_matches($u['pin'] ?? null, (string)$input[$field])) {
+                        http_response_code(409);
+                        echo json_encode(['error' => 'pin_in_use']);
+                        exit;
+                    }
+                }
+            }
         }
 
         kv_set($pdo, AUTH_KEY, json_encode($next));
@@ -394,7 +554,7 @@ if ($method === 'POST') {
         echo json_encode(['error' => 'missing_key']);
         exit;
     }
-    if ($key === AUTH_KEY) {
+    if ($key === AUTH_KEY || $key === USERS_KEY || $key === GROUPS_KEY) {
         http_response_code(403);
         echo json_encode(['error' => 'forbidden']);
         exit;

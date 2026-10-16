@@ -442,3 +442,24 @@ PIN-Werte selbst verlassen die Datenbank nie in Richtung Browser.
   bedienbar. „↩ Gespeicherte Reihenfolge“ steht weiterhin auch dem Admin zur
   Verfügung.
 
+## v1.24.0 – Benutzergruppen mit einzeln vergebbaren Rechten
+- Neuer Tab **Benutzer** (nur Ersteller): eigene **Gruppen** anlegen und jeder
+  Gruppe einzelne Rechte geben, dazu **Benutzer** mit **persönlichem PIN** in
+  eine Gruppe einordnen (anlegen, PIN neu vergeben, deaktivieren, löschen).
+- Vergebbare Rechte: Übersicht & Zahlungen · Mitglieder & Produkte verwalten ·
+  Summen im Verlauf sehen · Materialwirtschaft nutzen · Reihenfolge/Filter
+  speichern · Module aktivieren/deaktivieren.
+- Theke, Admin und Ersteller bleiben als feste Gruppen mit ihren gemeinsamen
+  PINs bestehen (Theke: nur Buchen; Admin: Zahlungen, Verwaltung, Summen,
+  Material; Ersteller: alles). Der Anmeldebildschirm akzeptiert jeden dieser PINs.
+- Ein PIN darf nur einmal vergeben sein (auch nicht doppelt zu Theke/Admin/
+  Ersteller); persönliche PINs haben mindestens 4 Zeichen.
+- Gesperrte Tabs zeigen weiterhin das 🔒; der PIN-Dialog akzeptiert jetzt jeden
+  PIN, dessen Gruppe das nötige Recht hat.
+- Sicherheit: Gruppen und Benutzer lassen sich nur mit dem Ersteller-PIN
+  ändern (serverseitig geprüft). Die persönlichen PINs sind wie die übrigen
+  PINs nie über die API lesbar. Wie bisher gilt: Das Ausblenden von Funktionen
+  in der Oberfläche ist ein pragmatischer Schutz, kein Ersatz für echte
+  Benutzerkonten.
+- Neuer Ersteller-Hinweis: Ohne Ersteller-PIN lässt sich der Tab nicht öffnen.
+
