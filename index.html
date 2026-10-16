@@ -383,7 +383,7 @@
   "use strict";
 
   // Bei jedem neuen Release hier aktualisieren (erscheint automatisch im Footer).
-  const APP_VERSION = 'v1.24.0';
+  const APP_VERSION = 'v1.24.1';
   const FOOTER = document.getElementById('appFooter');
   FOOTER.textContent = 'Erstellt von Marco Weber · ' + APP_VERSION;
 
@@ -487,6 +487,8 @@
     ownerPin: null,       // nur im Speicher, für Benutzer-/Gruppenverwaltung
     perms: new Set(),     // Rechte der angemeldeten Sitzung
     userName: null,
+    builtinPerms: { theke: [], admin: ['payments','manage','history','material'] },  // Rechte der festen Gruppen (vom Ersteller änderbar)
+    builtinDraft: null,
     groups: [],           // selbst angelegte Gruppen {id,name,perms[]}
     users: [], usersLoaded: false, usersLoading: false, groupsDraft: null,
     thekeUnlocked: false,
@@ -512,8 +514,8 @@
       // (Buchungshistorie als ein einzelner JSON-Block) auf die neue Tabelle -
       // no-op, falls schon migriert oder eine neue Installation.
       await apiAction({ action: 'migrate_transactions' });
-      const [s, m, p, inv, invLog, grp, authStatus, balancesRes] = await Promise.all([
-        safeGet('settings'), safeGet('members'), safeGet('products'), safeGet('inventory'), safeGet('inventoryLog'), safeGet('groups'), fetchAuthStatus(), apiAction({ action:'get_balances' })
+      const [s, m, p, inv, invLog, grp, bperms, authStatus, balancesRes] = await Promise.all([
+        safeGet('settings'), safeGet('members'), safeGet('products'), safeGet('inventory'), safeGet('inventoryLog'), safeGet('groups'), safeGet('builtinPerms'), fetchAuthStatus(), apiAction({ action:'get_balances' })
       ]);
       if (s) {
         const loadedSettings = JSON.parse(s.value);
@@ -543,6 +545,7 @@
       if (inv) state.inventory = JSON.parse(inv.value);
       if (invLog) state.inventoryLog = JSON.parse(invLog.value);
       if (grp) state.groups = JSON.parse(grp.value);
+      if (bperms) state.builtinPerms = Object.assign({}, state.builtinPerms, JSON.parse(bperms.value));
       if (authStatus) state.authStatus = authStatus;
       if (balancesRes.ok && balancesRes.data) state.balances = balancesRes.data.balances || {};
     } catch(e){ console.error('Ladefehler', e); }
@@ -619,7 +622,7 @@
   function clearSession(){
     state.thekeUnlocked = false; state.adminUnlocked = false; state.ownerUnlocked = false;
     state.verifiedPin = null; state.ownerPin = null; state.perms = new Set(); state.userName = null;
-    state.usersLoaded = false; state.users = []; state.groupsDraft = null;
+    state.usersLoaded = false; state.users = []; state.groupsDraft = null; state.builtinDraft = null;
   }
 
   async function safeGet(key){
@@ -805,7 +808,7 @@
       const r = await authAction({ action:'set_auth', thekePin: tp, adminPin: ap });
       if(!r.ok){ err.textContent = 'Speichern fehlgeschlagen, bitte erneut versuchen.'; return; }
       state.authStatus = { hasAuth: true, hasOwnerPin: false };
-      applySession({ level:'admin', perms:['payments','manage','history','material'], name:null }, ap);
+      applySession((await verifySession(ap)) || { level:'admin', perms:['payments','manage','history','material'], name:null }, ap);
       toast('Zugriffsschutz eingerichtet');
       render();
     });
@@ -850,55 +853,6 @@
     return wrap;
   }
 
-  function openAdminPinModal(view, onUnlocked){
-    const backdrop = el(`
-      <div class="modal-backdrop">
-        <div class="modal">
-          <h3>🔒 Admin-Bereich</h3>
-          <div style="font-size:13px; color:var(--muted); margin-bottom:10px;">
-            Für diesen Bereich ist ein PIN mit entsprechender Berechtigung nötig.
-          </div>
-          <div class="field">
-            <input type="password" id="adminPinInput" inputmode="numeric" placeholder="PIN" />
-          </div>
-          <div id="adminPinError" style="color:var(--danger); font-size:12.5px; min-height:16px;"></div>
-          <div class="modal-actions">
-            <button class="btn ghost" id="adminPinCancel">Abbrechen</button>
-            <button class="btn" id="adminPinConfirm">Entsperren</button>
-          </div>
-        </div>
-      </div>
-    `);
-    document.body.appendChild(backdrop);
-    const input = backdrop.querySelector('#adminPinInput');
-    const confirmBtn = backdrop.querySelector('#adminPinConfirm');
-    backdrop.querySelector('#adminPinCancel').addEventListener('click', ()=>backdrop.remove());
-    backdrop.addEventListener('click', (e)=>{ if(e.target===backdrop) backdrop.remove(); });
-    const confirmPin = async ()=>{
-      const pin = input.value.trim();
-      if(!pin) return;
-      confirmBtn.disabled = true;
-      const sess = await verifySession(pin);
-      confirmBtn.disabled = false;
-      if(!sess){
-        backdrop.querySelector('#adminPinError').textContent = 'Falscher PIN.';
-        input.value=''; input.focus(); return;
-      }
-      const need = VIEW_PERM[view];
-      const has = !need ? true : (need === '__owner' ? sess.level === 'owner' : (sess.level === 'owner' || sess.perms.includes(need)));
-      if(!has){
-        backdrop.querySelector('#adminPinError').textContent = 'Keine Berechtigung für diesen Bereich.';
-        input.value=''; input.focus(); return;
-      }
-      applySession(sess, pin);
-      backdrop.remove();
-      onUnlocked();
-    };
-    backdrop.querySelector('#adminPinConfirm').addEventListener('click', confirmPin);
-    input.addEventListener('keydown', e=>{ if(e.key==='Enter') confirmPin(); });
-    setTimeout(()=>input.focus(), 50);
-  }
-
   function renderHeader(){
     const nameWords = state.settings.clubName.trim().split(/\s+/);
     const brandAccent = nameWords.length > 1 ? nameWords.pop() : '';
@@ -916,11 +870,11 @@
         <div class="subtitle">Digitale Strichliste · Bestellen, buchen, abrechnen</div>
         <nav class="tabs">
           ${tabBtn('theke','Theke')}
-          ${tabBtn('uebersicht','Übersicht')}
-          ${tabBtn('mitglieder','Mitglieder')}
-          ${tabBtn('produkte','Produkte')}
+          ${canView('uebersicht') ? tabBtn('uebersicht','Übersicht') : ''}
+          ${canView('mitglieder') ? tabBtn('mitglieder','Mitglieder') : ''}
+          ${canView('produkte') ? tabBtn('produkte','Produkte') : ''}
           ${tabBtn('verlauf','Verlauf')}
-          ${state.settings.modules.materialwirtschaft ? tabBtn('material','Material', lowStockCount() || null) : ''}
+          ${(state.settings.modules.materialwirtschaft && can('material')) ? tabBtn('material','Material', lowStockCount() || null) : ''}
           ${can('modules') ? tabBtn('module','Module') : ''}
           ${state.ownerUnlocked ? tabBtn('benutzer','Benutzer') : ''}
         </nav>
@@ -942,10 +896,6 @@
     header.querySelectorAll('nav.tabs button').forEach(b=>{
       b.addEventListener('click', ()=>{
         const targetView = b.dataset.view;
-        if(!canView(targetView)){
-          openAdminPinModal(targetView, ()=>{ state.view = targetView; state.selectedMember=null; render(); });
-          return;
-        }
         state.view = targetView; state.selectedMember=null; render();
       });
     });
@@ -2312,11 +2262,6 @@
 
 
   // ---------- BENUTZER & GRUPPEN (nur Ersteller) ----------
-  const FIXED_GROUPS = [
-    { name:'Theke', desc:'Gemeinsamer Theke-PIN. Darf nur Bestellungen buchen.', perms:[] },
-    { name:'Admin', desc:'Gemeinsamer Admin-PIN.', perms:['payments','manage','history','material'] },
-    { name:'Ersteller', desc:'Ersteller-PIN. Hat immer alle Rechte, verwaltet Gruppen und Benutzer.', perms:PERM_DEFS.map(p=>p.key) },
-  ];
   const permLabel = (k)=> (PERM_DEFS.find(p=>p.key===k)||{}).label || k;
 
   async function loadUsers(){
@@ -2352,24 +2297,46 @@
       <div class="card">
         <div class="section-title">Gruppen &amp; Rechte</div>
         <div style="font-size:13px; color:var(--muted);">
-          Theke, Admin und Ersteller sind feste Gruppen mit ihrem gemeinsamen PIN.
-          Eigene Gruppen bekommen einzelne Rechte; ihre Mitglieder melden sich mit einem
+          Theke, Admin und Ersteller sind feste Gruppen mit ihrem gemeinsamen PIN, die Rechte von
+          Theke und Admin legst du frei fest. Eigene Gruppen bekommen ebenfalls einzelne Rechte; ihre Mitglieder melden sich mit einem
           <b>persönlichen PIN</b> an (siehe unten). Nur für den Ersteller sichtbar.
         </div>
       </div>
     `));
 
-    // Feste Gruppen (nur Anzeige)
-    const fixedCard = el(`<div class="card"><div style="font-weight:600; margin-bottom:8px;">Feste Gruppen</div></div>`);
-    FIXED_GROUPS.forEach(g=>{
-      fixedCard.appendChild(el(`
-        <div style="padding:8px 0; border-top:1px solid var(--line);">
-          <div style="font-weight:600;">${escapeHtml(g.name)}</div>
-          <div style="font-size:12.5px; color:var(--muted);">${escapeHtml(g.desc)}</div>
-          <div style="font-size:12.5px; margin-top:3px;">${g.perms.length ? g.perms.map(k=>escapeHtml(permLabel(k))).join(' · ') : 'nur Buchen an der Theke'}</div>
+    // Feste Gruppen: Theke und Admin sind einstellbar, Ersteller hat immer alles.
+    if(!state.builtinDraft) state.builtinDraft = JSON.parse(JSON.stringify(state.builtinPerms));
+    const bdraft = state.builtinDraft;
+    const fixedCard = el(`<div class="card"><div style="font-weight:600; margin-bottom:4px;">Feste Gruppen</div>
+      <div style="font-size:12.5px; color:var(--muted);">Gemeinsamer PIN je Gruppe. Rechte von Theke und Admin kannst du hier festlegen.</div></div>`);
+    [['theke','Theke','Gemeinsamer Theke-PIN. Buchen an der Theke ist immer erlaubt.'],['admin','Admin','Gemeinsamer Admin-PIN.']].forEach(([lvl,name,desc])=>{
+      const list = bdraft[lvl] || (bdraft[lvl] = []);
+      const row = el(`
+        <div style="padding:12px 0; border-top:1px solid var(--line); margin-top:8px;">
+          <div style="font-weight:600;">${name}</div>
+          <div style="font-size:12.5px; color:var(--muted); margin-bottom:6px;">${desc}</div>
+          <div style="display:grid; gap:6px;">
+            ${PERM_DEFS.map(p=>`
+              <label style="display:flex; align-items:center; gap:10px; font-size:14px; cursor:pointer;">
+                <input type="checkbox" data-bperm="${p.key}" ${list.includes(p.key)?'checked':''} style="width:20px; height:20px; flex:0 0 auto;" />
+                <span>${escapeHtml(p.label)}</span>
+              </label>`).join('')}
+          </div>
         </div>
-      `));
+      `);
+      row.querySelectorAll('[data-bperm]').forEach(cb=>cb.addEventListener('change', ()=>{
+        const k = cb.dataset.bperm;
+        bdraft[lvl] = bdraft[lvl].filter(x=>x!==k);
+        if(cb.checked) bdraft[lvl].push(k);
+      }));
+      fixedCard.appendChild(row);
     });
+    fixedCard.appendChild(el(`
+      <div style="padding:12px 0; border-top:1px solid var(--line); margin-top:8px;">
+        <div style="font-weight:600;">Ersteller</div>
+        <div style="font-size:12.5px; color:var(--muted);">Ersteller-PIN. Hat immer alle Rechte und verwaltet Gruppen und Benutzer - nicht änderbar.</div>
+      </div>
+    `));
     wrap.appendChild(fixedCard);
 
     // Eigene Gruppen (bearbeitbar)
@@ -2413,9 +2380,10 @@
       draft.push({ id: uid(), name:'', perms:[] }); render();
     });
     grpActions.querySelector('#saveGroups').addEventListener('click', async ()=>{
-      const r = await authAction({ action:'save_groups', confirmPin: state.ownerPin || '', groups: draft });
+      const r = await authAction({ action:'save_groups', confirmPin: state.ownerPin || '', groups: draft, builtin: bdraft });
       if(!r.ok){ toast(userError(r)); return; }
       state.groups = JSON.parse(JSON.stringify(draft));
+      state.builtinPerms = JSON.parse(JSON.stringify(bdraft));
       toast('Gruppen gespeichert'); render();
     });
     grpCard.appendChild(grpActions);

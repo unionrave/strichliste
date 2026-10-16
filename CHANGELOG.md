@@ -463,3 +463,13 @@ PIN-Werte selbst verlassen die Datenbank nie in Richtung Browser.
   Benutzerkonten.
 - Neuer Ersteller-Hinweis: Ohne Ersteller-PIN lässt sich der Tab nicht öffnen.
 
+## v1.24.1 – Feste Gruppen einstellbar, Tabs ohne Recht ausgeblendet
+- Im Tab **Benutzer** lassen sich jetzt auch die Rechte der festen Gruppen
+  **Theke** und **Admin** einzeln festlegen (z. B. Materialwirtschaft nur für
+  Admin, oder auch für Theke). Der Ersteller behält immer alle Rechte.
+- Tabs, für die die angemeldete Person kein Recht hat, werden **nicht mehr
+  angezeigt** (bisher mit 🔒). Wer mehr Rechte braucht, meldet sich ab und mit
+  dem passenden PIN neu an. Der Dialog zum Nachentsperren entfällt damit.
+- Rechte werden beim Anmelden vom Server geliefert: Änderungen an einer Gruppe
+  gelten für bereits angemeldete Personen erst nach erneutem Anmelden.
+

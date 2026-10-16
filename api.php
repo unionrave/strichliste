@@ -19,6 +19,8 @@ const AUTH_KEY = 'auth';
 const USERS_KEY = 'users';
 // Benutzergruppen mit Rechten - lesbar, aber nur über save_groups änderbar.
 const GROUPS_KEY = 'groups';
+// Vom Ersteller angepasste Rechte der festen Gruppen Theke/Admin (Ersteller hat immer alle).
+const BUILTIN_KEY = 'builtinPerms';
 // Einzeln vergebbare Rechte. Theke/Admin/Ersteller sind feste Gruppen.
 const PERMISSIONS = ['payments', 'manage', 'history', 'material', 'saveOrder', 'modules'];
 
@@ -84,12 +86,19 @@ function pin_matches($stored, $given) {
     return !empty($stored) && $given !== '' && hash_equals((string)$stored, (string)$given);
 }
 
-function builtin_perms($level) {
-    switch ($level) {
-        case 'owner': return PERMISSIONS;
-        case 'admin': return ['payments', 'manage', 'history', 'material'];
-        default: return [];
+function builtin_perms($pdo, $level) {
+    if ($level === 'owner') return PERMISSIONS;
+    $defaults = [
+        'theke' => [],
+        'admin' => ['payments', 'manage', 'history', 'material'],
+    ];
+    if (!isset($defaults[$level])) return [];
+    $raw = kv_get($pdo, BUILTIN_KEY);
+    $stored = $raw ? json_decode($raw, true) : null;
+    if (is_array($stored) && isset($stored[$level]) && is_array($stored[$level])) {
+        return clean_perms($stored[$level]);
     }
+    return $defaults[$level];
 }
 function get_users($pdo) {
     $raw = kv_get($pdo, USERS_KEY);
@@ -248,7 +257,7 @@ if ($method === 'POST') {
             } elseif (pin_matches($auth['thekePin'] ?? null, $pin)) {
                 $level = 'theke';
             }
-            if ($level !== null) $perms = builtin_perms($level);
+            if ($level !== null) $perms = builtin_perms($pdo, $level);
         }
         // Persönliche Benutzer (Gruppen mit frei vergebenen Rechten).
         if ($level === null && $pin !== '') {
@@ -294,6 +303,13 @@ if ($method === 'POST') {
         }
         foreach (get_users($pdo) as $u) {
             if (!isset($ids[$u['groupId'] ?? ''])) fail(409, 'group_in_use');
+        }
+        if (isset($input['builtin']) && is_array($input['builtin'])) {
+            $b = [];
+            foreach (['theke', 'admin'] as $lvl) {
+                if (isset($input['builtin'][$lvl])) $b[$lvl] = clean_perms($input['builtin'][$lvl]);
+            }
+            kv_set($pdo, BUILTIN_KEY, json_encode($b));
         }
         kv_set($pdo, GROUPS_KEY, json_encode($clean));
         echo json_encode(['ok' => true]);
@@ -554,7 +570,7 @@ if ($method === 'POST') {
         echo json_encode(['error' => 'missing_key']);
         exit;
     }
-    if ($key === AUTH_KEY || $key === USERS_KEY || $key === GROUPS_KEY) {
+    if ($key === AUTH_KEY || $key === USERS_KEY || $key === GROUPS_KEY || $key === BUILTIN_KEY) {
         http_response_code(403);
         echo json_encode(['error' => 'forbidden']);
         exit;
