@@ -22,7 +22,7 @@ const GROUPS_KEY = 'groups';
 // Vom Ersteller angepasste Rechte der festen Gruppen Theke/Admin (Ersteller hat immer alle).
 const BUILTIN_KEY = 'builtinPerms';
 // Einzeln vergebbare Rechte. Theke/Admin/Ersteller sind feste Gruppen.
-const PERMISSIONS = ['payments', 'manage', 'history', 'material', 'saveOrder', 'modules'];
+const PERMISSIONS = ['payments', 'manage', 'history', 'material', 'saveOrder', 'modules', 'security'];
 
 
 try {
@@ -90,13 +90,18 @@ function builtin_perms($pdo, $level) {
     if ($level === 'owner') return PERMISSIONS;
     $defaults = [
         'theke' => [],
-        'admin' => ['payments', 'manage', 'history', 'material'],
+        'admin' => ['payments', 'manage', 'history', 'material', 'security'],
     ];
     if (!isset($defaults[$level])) return [];
     $raw = kv_get($pdo, BUILTIN_KEY);
     $stored = $raw ? json_decode($raw, true) : null;
     if (is_array($stored) && isset($stored[$level]) && is_array($stored[$level])) {
-        return clean_perms($stored[$level]);
+        $p = clean_perms($stored[$level]);
+        // Vor v1.24.2 gab es das Recht "security" noch nicht - der Admin hatte
+        // den Bereich Sicherheit aber immer. Gespeicherte Einstellungen ohne
+        // Versionsmarke bekommen es für Admin daher einmalig dazu.
+        if ($level === 'admin' && empty($stored['_v'])) $p[] = 'security';
+        return $p;
     }
     return $defaults[$level];
 }
@@ -309,6 +314,7 @@ if ($method === 'POST') {
             foreach (['theke', 'admin'] as $lvl) {
                 if (isset($input['builtin'][$lvl])) $b[$lvl] = clean_perms($input['builtin'][$lvl]);
             }
+            $b['_v'] = 2;
             kv_set($pdo, BUILTIN_KEY, json_encode($b));
         }
         kv_set($pdo, GROUPS_KEY, json_encode($clean));

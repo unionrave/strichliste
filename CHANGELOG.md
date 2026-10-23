@@ -473,3 +473,13 @@ PIN-Werte selbst verlassen die Datenbank nie in Richtung Browser.
 - Rechte werden beim Anmelden vom Server geliefert: Änderungen an einer Gruppe
   gelten für bereits angemeldete Personen erst nach erneutem Anmelden.
 
+## v1.24.2 – Recht „Sicherheit“ für die Übersicht
+- Neues Recht **„Bereich „Sicherheit“ in der Übersicht“**: Der Kasten Sicherheit
+  (Barcode-Pflicht für Buchungen, PINs ändern) erscheint nur noch für Gruppen,
+  die dieses Recht haben. Es lässt sich für Theke, Admin und eigene Gruppen
+  im Tab Benutzer ein- und ausschalten.
+- Der Admin behält den Bereich standardmäßig (auch bei schon gespeicherten
+  Gruppeneinstellungen). „PINs ändern“ ist weiterhin nur mit Admin- oder
+  Ersteller-PIN möglich, da der Server die Änderung mit einem dieser PINs
+  bestätigen lässt.
+
