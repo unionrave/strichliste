@@ -383,7 +383,7 @@
   "use strict";
 
   // Bei jedem neuen Release hier aktualisieren (erscheint automatisch im Footer).
-  const APP_VERSION = 'v1.24.2';
+  const APP_VERSION = 'v1.24.3';
   const FOOTER = document.getElementById('appFooter');
   FOOTER.textContent = 'Erstellt von Marco Weber · ' + APP_VERSION;
 
@@ -656,6 +656,37 @@
     return state.balances[memberId] || 0;
   }
 
+  // Salden vom Server nachladen. Nötig, weil Buchungen auch von anderen Geräten
+  // (zweites Tablet, Handy, anderer Browser) kommen können - der lokale Saldo
+  // wäre sonst bis zum nächsten Neuladen veraltet. Rendert nur neu, wenn sich
+  // wirklich ein Wert geändert hat und gerade nichts bearbeitet wird.
+  let balancesSeq = 0;
+  async function refreshBalances(){
+    if(!state.loaded) return;
+    const seq = ++balancesSeq;
+    {
+      const r = await apiAction({ action: 'get_balances' });
+      // Nur die Antwort der zuletzt gestarteten Abfrage zählt - eine ältere,
+      // die erst nach einer neuen Buchung eintrifft, würde sonst veraltete Werte zeigen.
+      if(seq !== balancesSeq) return;
+      if(!(r.ok && r.data && r.data.balances)) return;
+      const next = r.data.balances;
+      const keys = new Set([...Object.keys(next), ...Object.keys(state.balances)]);
+      let changed = false;
+      keys.forEach(k=>{ if(Math.abs((next[k]||0) - (state.balances[k]||0)) > 0.004) changed = true; });
+      if(!changed) return;
+      state.balances = next;
+      const editing = document.querySelector('.modal-backdrop') ||
+        (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName));
+      if(!editing) render();
+    }
+  }
+  // Beim Zurückkehren zur Seite, alle 30 s im Hintergrund und bei Tab-Wechsel.
+  document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) refreshBalances(); });
+  window.addEventListener('pageshow', ()=>refreshBalances());
+  window.addEventListener('focus', ()=>refreshBalances());
+  setInterval(()=>{ if(!document.hidden) refreshBalances(); }, 30000);
+
   // Bucht eine einzelne Buchung (Bestellung oder Zahlung/Korrektur) und
   // aktualisiert den betroffenen Saldo direkt lokal, ohne die komplette
   // Salden-Liste neu vom Server zu laden.
@@ -664,6 +695,7 @@
     if(!r.ok) return false;
     const delta = tx.type === 'order' ? tx.total : -tx.amount;
     state.balances[tx.memberId] = (state.balances[tx.memberId] || 0) + delta;
+    refreshBalances(); // mit dem Server abgleichen (andere Geräte)
     state.verlaufData.filterKey = null;
     state.verlaufData.attemptedKey = null; // beide Sperren zurücksetzen, sonst hält sich der Verlauf innerhalb der Sitzung fälschlich für aktuell
     return true;
@@ -898,6 +930,7 @@
       b.addEventListener('click', ()=>{
         const targetView = b.dataset.view;
         state.view = targetView; state.selectedMember=null; render();
+        refreshBalances();
       });
     });
     return header;
@@ -1004,6 +1037,7 @@
   // Bildschirm besser aus und die Buchen-Leiste bleibt immer sichtbar.
   function openOrderOverlay(member){
     state.selectedMember = member.id;
+    refreshBalances();
     state.cart = {};
 
     const backdrop = el(`<div class="modal-backdrop"></div>`);

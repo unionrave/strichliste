@@ -483,3 +483,14 @@ PIN-Werte selbst verlassen die Datenbank nie in Richtung Browser.
   Ersteller-PIN möglich, da der Server die Änderung mit einem dieser PINs
   bestätigen lässt.
 
+## v1.24.3 – Salden bleiben aktuell (mehrere Geräte)
+- Fix: Die Beträge bei den Namen konnten veraltet sein, wenn auf einem anderen
+  Gerät (zweites Tablet, Handy, anderer Browser) gebucht wurde. Die Salden
+  wurden nur beim Start geladen und danach lokal fortgeschrieben; der Verlauf
+  kam dagegen immer frisch vom Server.
+- Die Salden werden jetzt automatisch mit dem Server abgeglichen: alle 30
+  Sekunden, beim Zurückkehren zur Seite/App, beim Wechsel des Tabs, beim
+  Öffnen eines Mitglieds und nach jeder Buchung. Die Ansicht wird nur neu
+  gezeichnet, wenn sich ein Betrag wirklich geändert hat und gerade nichts
+  eingegeben wird oder ein Dialog offen ist.
+
